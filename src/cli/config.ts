@@ -21,6 +21,10 @@ export interface KazeConfig {
   reporter?: "verbose" | "dot";
   testMatch?: string[];
   screenshot?: boolean;
+  /** Regex pattern: only run tests whose name matches. */
+  grep?: string;
+  /** Regex pattern: skip tests whose name matches. */
+  grepInvert?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -97,6 +101,26 @@ function validateConfig(cfg: unknown): KazeConfig {
     result.testMatch = c.testMatch as string[];
   }
 
+  if (c.grep !== undefined) {
+    if (typeof c.grep !== "string") {
+      console.error(
+        `[kaze] Config error: "grep" must be a string (got ${JSON.stringify(c.grep)})`
+      );
+      process.exit(2);
+    }
+    result.grep = c.grep;
+  }
+
+  if (c.grepInvert !== undefined) {
+    if (typeof c.grepInvert !== "string") {
+      console.error(
+        `[kaze] Config error: "grepInvert" must be a string (got ${JSON.stringify(c.grepInvert)})`
+      );
+      process.exit(2);
+    }
+    result.grepInvert = c.grepInvert;
+  }
+
   return result;
 }
 
@@ -143,6 +167,8 @@ export function mergeConfig(
     result.testMatch = cliOverrides.testMatch;
   if (cliOverrides.screenshot !== undefined)
     result.screenshot = cliOverrides.screenshot;
+  if (cliOverrides.grep !== undefined) result.grep = cliOverrides.grep;
+  if (cliOverrides.grepInvert !== undefined) result.grepInvert = cliOverrides.grepInvert;
 
   return result;
 }

@@ -85,6 +85,8 @@ export async function watch(opts: WatchOptions): Promise<void> {
       workers: opts.workers,
       timeout: opts.timeout,
       screenshot: opts.screenshot,
+      grep: opts.grep,
+      grepInvert: opts.grepInvert,
     };
     try {
       const results = await run(runOpts, pool);

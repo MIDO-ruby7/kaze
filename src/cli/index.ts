@@ -33,6 +33,8 @@ const { values, positionals } = parseArgs({
     reporter: { type: "string" },
     watch: { type: "boolean", short: "w", default: false },
     screenshot: { type: "string" },
+    grep: { type: "string" },
+    "grep-invert": { type: "string" },
     help: { type: "boolean", short: "h", default: false },
   },
   allowPositionals: true,
@@ -48,18 +50,22 @@ Usage:
   kaze test [pattern...] [options]   # "test" subcommand (backward compat)
 
 Options:
-  --workers=N         Max parallel workers (or KAZE_WORKERS env var)
-  --timeout=N         Per-test timeout in ms (default: 30000)
-  --reporter=MODE     Output mode: verbose (default) | dot
-  --screenshot=off    Disable auto-screenshot on failure/timeout
-  --watch, -w         Watch for file changes and re-run tests
-  -h, --help          Show this help
+  --workers=N              Max parallel workers (or KAZE_WORKERS env var)
+  --timeout=N              Per-test timeout in ms (default: 30000)
+  --reporter=MODE          Output mode: verbose (default) | dot
+  --screenshot=off         Disable auto-screenshot on failure/timeout
+  --grep=PATTERN           Only run tests matching regex pattern
+  --grep-invert=PATTERN    Skip tests matching regex pattern
+  --watch, -w              Watch for file changes and re-run tests
+  -h, --help               Show this help
 
 Examples:
   kaze
   kaze src/features/
   kaze "**/*.spec.ts"
   kaze --workers=4 --reporter=dot
+  kaze --grep="login"
+  kaze --grep-invert="slow"
   kaze --watch
   kaze test                          # backward compat
   kaze test src/features/            # backward compat
@@ -101,12 +107,17 @@ const patterns = args; // may be empty → detect all spec files
     const cliScreenshot =
       values.screenshot === "off" ? false :
       values.screenshot === "on"  ? true  : undefined;
+    const cliGrep = typeof values.grep === "string" ? values.grep : undefined;
+    const cliGrepInvert =
+      typeof values["grep-invert"] === "string" ? values["grep-invert"] : undefined;
 
     const config = mergeConfig(fileConfig, {
       workers: cliWorkers !== undefined && !isNaN(cliWorkers) ? cliWorkers : undefined,
       timeout: cliTimeout !== undefined && !isNaN(cliTimeout) ? cliTimeout : undefined,
       reporter: cliReporter,
       screenshot: cliScreenshot,
+      grep: cliGrep,
+      grepInvert: cliGrepInvert,
       // testMatch: patterns are handled separately below
     });
 
@@ -127,6 +138,8 @@ const patterns = args; // may be empty → detect all spec files
         timeout: config.timeout,
         reporterMode,
         screenshot: screenshotEnabled,
+        grep: config.grep,
+        grepInvert: config.grepInvert,
       });
       return;
     }
@@ -138,6 +151,8 @@ const patterns = args; // may be empty → detect all spec files
       workers: config.workers,
       timeout: config.timeout,
       screenshot: screenshotEnabled,
+      grep: config.grep,
+      grepInvert: config.grepInvert,
     });
 
     const summary = report(results, reporterMode);

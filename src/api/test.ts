@@ -56,6 +56,21 @@ let _hooks: RegisteredHook[] = [];
 let _idCounter = 0;
 let _currentDescribe = "";
 
+/**
+ * Whether any test.only / test.describe.only has been registered in this file run.
+ *
+ * NOTE (AC-12 — cross-file scope):
+ * `_onlyMode` is a module-level singleton. `runner.ts` imports all spec files
+ * and then calls `collectTestCases` once. Therefore, if **any** spec file
+ * registers a `test.only` or `test.describe.only`, **all** other tests across
+ * every spec file in the same `collectTestCases` call are excluded — not just
+ * the tests in the file that contains the `.only`.
+ * This mirrors Playwright's global `.only` behaviour.
+ */
+let _onlyMode = false;
+/** Set of full names registered via test.only or test.describe.only. */
+const _onlyNames = new Set<string>();
+
 function nextId(): string {
   return `test-${++_idCounter}`;
 }
@@ -63,6 +78,13 @@ function nextId(): string {
 // ---------------------------------------------------------------------------
 // test(name, fn)
 // ---------------------------------------------------------------------------
+
+interface TestFn {
+  (name: string, fn: (page: Page) => Promise<void>, opts?: { timeout?: number }): void;
+  only: (name: string, fn: (page: Page) => Promise<void>, opts?: { timeout?: number }) => void;
+  skip: (name: string, fn: (page: Page) => Promise<void>) => void;
+  describe: DescribeFn;
+}
 
 function testFn(
   name: string,
@@ -83,7 +105,13 @@ function testFn(
 // test.describe(name, fn)
 // ---------------------------------------------------------------------------
 
-testFn.describe = function describe(name: string, fn: () => void): void {
+interface DescribeFn {
+  (name: string, fn: () => void): void;
+  only: (name: string, fn: () => void) => void;
+  skip: (name: string, fn: () => void) => void;
+}
+
+const describeFn: DescribeFn = function describe(name: string, fn: () => void): void {
   const prev = _currentDescribe;
   _currentDescribe = prev ? `${prev} > ${name}` : name;
   try {
@@ -93,8 +121,56 @@ testFn.describe = function describe(name: string, fn: () => void): void {
   }
 };
 
+/** test.describe.only — runs all tests inside the block; others (outside) are excluded. AC-2 */
+describeFn.only = function describeOnly(name: string, fn: () => void): void {
+  _onlyMode = true;
+  const prev = _currentDescribe;
+  const scopeName = prev ? `${prev} > ${name}` : name;
+  _currentDescribe = scopeName;
+
+  // Capture registry length before running fn so we can mark tests as "only"
+  const before = _registry.length;
+  try {
+    fn();
+  } finally {
+    _currentDescribe = prev;
+  }
+  // Mark all tests registered inside this describe as "only"
+  for (let i = before; i < _registry.length; i++) {
+    _onlyNames.add(_registry[i]!.name);
+  }
+};
+
+/** test.describe.skip — skips all tests inside the block. AC-4 */
+describeFn.skip = function describeSkip(_name: string, _fn: () => void): void {
+  // Simply do not execute fn — no tests are registered.
+};
+
+testFn.describe = describeFn;
+
 // ---------------------------------------------------------------------------
-// test.skip(name, fn)
+// test.only(name, fn) — AC-1
+// ---------------------------------------------------------------------------
+
+testFn.only = function only(
+  name: string,
+  fn: (page: Page) => Promise<void>,
+  opts?: { timeout?: number },
+): void {
+  _onlyMode = true;
+  const fullName = _currentDescribe ? `${_currentDescribe} > ${name}` : name;
+  _onlyNames.add(fullName);
+  _registry.push({
+    id: nextId(),
+    name: fullName,
+    fn,
+    timeout: opts?.timeout,
+    scope: _currentDescribe,
+  });
+};
+
+// ---------------------------------------------------------------------------
+// test.skip(name, fn) — AC-3
 // ---------------------------------------------------------------------------
 
 testFn.skip = function skip(
@@ -128,7 +204,7 @@ export function afterEach(fn: HookFn): void {
 // Export
 // ---------------------------------------------------------------------------
 
-export const test = testFn;
+export const test = testFn as TestFn;
 
 // ---------------------------------------------------------------------------
 // Adapter: convert registered tests into Scheduler TestCases
@@ -147,6 +223,17 @@ function scopeChain(scope: string): string[] {
   return chain;
 }
 
+// ---------------------------------------------------------------------------
+// collectTestCases options
+// ---------------------------------------------------------------------------
+
+export interface CollectOptions {
+  /** Regex pattern: only include tests whose name matches (AC-5). */
+  grep?: string;
+  /** Regex pattern: exclude tests whose name matches (AC-6). */
+  grepInvert?: string;
+}
+
 /**
  * Convert all registered `test(...)` calls into Scheduler-compatible TestCase
  * objects, wrapping each with beforeAll / afterAll / beforeEach / afterEach hooks.
@@ -158,9 +245,41 @@ function scopeChain(scope: string): string[] {
  *   afterEach (innermost → outermost)
  *   afterAll (innermost → outermost, once per scope when last test in scope)
  */
-export function collectTestCases(pool: AdapterResolver): TestCase[] {
-  const pending = _registry.splice(0);
+export function collectTestCases(pool: AdapterResolver, opts?: CollectOptions): TestCase[] {
+  let pending = _registry.splice(0);
   const hooks = _hooks.splice(0);
+
+  // Apply only-mode filter: if any test.only / test.describe.only was used,
+  // only include tests whose full name is in _onlyNames.
+  if (_onlyMode) {
+    pending = pending.filter((p) => _onlyNames.has(p.name));
+  }
+
+  // Apply grep / grepInvert filters (AC-5, AC-6, AC-11)
+  if (opts?.grep) {
+    let re: RegExp;
+    try {
+      re = new RegExp(opts.grep);
+    } catch {
+      console.error(`[kaze] Invalid grep pattern: "${opts.grep}"`);
+      process.exit(2);
+    }
+    pending = pending.filter((p) => re.test(p.name));
+  }
+  if (opts?.grepInvert) {
+    let re: RegExp;
+    try {
+      re = new RegExp(opts.grepInvert);
+    } catch {
+      console.error(`[kaze] Invalid grep pattern: "${opts.grepInvert}"`);
+      process.exit(2);
+    }
+    pending = pending.filter((p) => !re.test(p.name));
+  }
+
+  // Reset only state so subsequent collectTestCases calls start fresh.
+  _onlyMode = false;
+  _onlyNames.clear();
 
   // Count tests per scope for afterAll tracking
   const testCountPerScope = new Map<string, number>();
@@ -253,4 +372,6 @@ export function _resetRegistry(): void {
   _hooks = [];
   _idCounter = 0;
   _currentDescribe = "";
+  _onlyMode = false;
+  _onlyNames.clear();
 }
