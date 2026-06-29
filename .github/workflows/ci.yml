@@ -31,6 +31,14 @@ jobs:
       - name: Build
         run: pnpm build
 
+      - name: Install Chromium system dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q \
+            libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 \
+            libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 \
+            libxfixes3 libxrandr2 libgbm1 libasound2t64
+
       - name: Install Chromium
         run: node -e "import('./dist/installer/index.js').then(m => m.installBrowser())"
 
