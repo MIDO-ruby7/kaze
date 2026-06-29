@@ -1,0 +1,105 @@
+import { describe, it, expect } from "vitest";
+import { computePoolSizing } from "../../pool/sizing.js";
+import type { HostResources } from "../../pool/resources.js";
+
+// Helper: build a HostResources object with given totalMemMB and cpuCount.
+// freeMemMB defaults to totalMemMB (no OS overhead) to keep tests predictable.
+function makeResources(
+  totalMemMB: number,
+  cpuCount: number,
+  freeMemMB?: number,
+): HostResources {
+  return {
+    totalMemMB,
+    freeMemMB: freeMemMB ?? totalMemMB,
+    cpuCount,
+  };
+}
+
+describe("computePoolSizing", () => {
+  // AC-5: minimum guarantee — even when RAM is nearly zero the result must be at least 1/1
+  it("AC-5: returns minimum {1,1} when available RAM is extremely low", () => {
+    const result = computePoolSizing(makeResources(256, 1));
+    expect(result.processCount).toBeGreaterThanOrEqual(1);
+    expect(result.contextsPerProcess).toBeGreaterThanOrEqual(1);
+  });
+
+  // AC-4 case 1: low RAM (1 GB), 4 cores
+  it("AC-4 low-RAM: 1 GB / 4 cores — stays within memory budget", () => {
+    const resources = makeResources(1024, 4);
+    const result = computePoolSizing(resources);
+    expect(result.processCount).toBeGreaterThanOrEqual(1);
+    expect(result.contextsPerProcess).toBeGreaterThanOrEqual(1);
+    // total RAM used must not exceed available
+    const usedMB =
+      result.processCount * (350 + result.contextsPerProcess * 50);
+    expect(usedMB).toBeLessThanOrEqual(1024);
+  });
+
+  // AC-4 case 2: mid RAM (8 GB), 4 cores
+  it("AC-4 mid-RAM: 8 GB / 4 cores — scales up processCount", () => {
+    const resources = makeResources(8 * 1024, 4);
+    const result = computePoolSizing(resources);
+    expect(result.processCount).toBeGreaterThanOrEqual(2);
+    expect(result.contextsPerProcess).toBeGreaterThanOrEqual(1);
+  });
+
+  // AC-4 case 3: high RAM (64 GB), 8 cores
+  it("AC-4 high-RAM: 64 GB / 8 cores — processCount capped by CPU cores", () => {
+    const resources = makeResources(64 * 1024, 8);
+    const result = computePoolSizing(resources);
+    // processCount must not exceed cpuCount
+    expect(result.processCount).toBeLessThanOrEqual(8);
+    expect(result.processCount).toBeGreaterThanOrEqual(1);
+    expect(result.contextsPerProcess).toBeGreaterThanOrEqual(1);
+  });
+
+  // AC-4 case 4: single core
+  it("AC-4 single-core: processCount is 1 regardless of RAM", () => {
+    const resources = makeResources(8 * 1024, 1);
+    const result = computePoolSizing(resources);
+    expect(result.processCount).toBe(1);
+    expect(result.contextsPerProcess).toBeGreaterThanOrEqual(1);
+  });
+
+  // AC-4 case 5: many cores (16), high RAM
+  it("AC-4 multi-core: 64 GB / 16 cores — processCount uses many cores", () => {
+    const resources = makeResources(64 * 1024, 16);
+    const result = computePoolSizing(resources);
+    expect(result.processCount).toBeGreaterThanOrEqual(4);
+    expect(result.processCount).toBeLessThanOrEqual(16);
+  });
+
+  // AC-3: maxProcesses override
+  it("AC-3: maxProcesses caps the process count", () => {
+    const resources = makeResources(64 * 1024, 16);
+    const result = computePoolSizing(resources, { maxProcesses: 2 });
+    expect(result.processCount).toBeLessThanOrEqual(2);
+  });
+
+  // AC-3: maxContextsPerProcess override
+  it("AC-3: maxContextsPerProcess caps contexts per process", () => {
+    const resources = makeResources(64 * 1024, 16);
+    const result = computePoolSizing(resources, { maxContextsPerProcess: 3 });
+    expect(result.contextsPerProcess).toBeLessThanOrEqual(3);
+  });
+
+  // AC-3: both overrides at once
+  it("AC-3: both maxProcesses and maxContextsPerProcess can be set together", () => {
+    const resources = makeResources(64 * 1024, 16);
+    const result = computePoolSizing(resources, {
+      maxProcesses: 1,
+      maxContextsPerProcess: 1,
+    });
+    expect(result.processCount).toBe(1);
+    expect(result.contextsPerProcess).toBe(1);
+  });
+
+  // AC-5: CI-like environment (very low free RAM, single CPU)
+  it("AC-5: CI narrow environment guarantees minimum {1,1}", () => {
+    const resources = makeResources(512, 1, 100);
+    const result = computePoolSizing(resources);
+    expect(result.processCount).toBeGreaterThanOrEqual(1);
+    expect(result.contextsPerProcess).toBeGreaterThanOrEqual(1);
+  });
+});
