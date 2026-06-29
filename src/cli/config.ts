@@ -24,6 +24,83 @@ export interface KazeConfig {
 }
 
 // ---------------------------------------------------------------------------
+// validateConfig (AC-9)
+// ---------------------------------------------------------------------------
+
+/**
+ * Validates the raw config object loaded from the config file.
+ * Exits with code 2 and an error message if any field has an invalid type/value.
+ */
+function validateConfig(cfg: unknown): KazeConfig {
+  const result: KazeConfig = {};
+  if (typeof cfg !== "object" || cfg === null) return result;
+  const c = cfg as Record<string, unknown>;
+
+  if (c.workers !== undefined) {
+    if (
+      typeof c.workers !== "number" ||
+      !Number.isInteger(c.workers) ||
+      c.workers < 1
+    ) {
+      console.error(
+        `[kaze] Config error: "workers" must be a positive integer (got ${JSON.stringify(c.workers)})`
+      );
+      process.exit(2);
+    }
+    result.workers = c.workers;
+  }
+
+  if (c.timeout !== undefined) {
+    if (
+      typeof c.timeout !== "number" ||
+      !Number.isInteger(c.timeout) ||
+      c.timeout < 1
+    ) {
+      console.error(
+        `[kaze] Config error: "timeout" must be a positive integer (got ${JSON.stringify(c.timeout)})`
+      );
+      process.exit(2);
+    }
+    result.timeout = c.timeout;
+  }
+
+  if (c.reporter !== undefined) {
+    if (c.reporter !== "verbose" && c.reporter !== "dot") {
+      console.error(
+        `[kaze] Config error: "reporter" must be "verbose" or "dot" (got ${JSON.stringify(c.reporter)})`
+      );
+      process.exit(2);
+    }
+    result.reporter = c.reporter;
+  }
+
+  if (c.screenshot !== undefined) {
+    if (typeof c.screenshot !== "boolean") {
+      console.error(
+        `[kaze] Config error: "screenshot" must be a boolean (got ${JSON.stringify(c.screenshot)})`
+      );
+      process.exit(2);
+    }
+    result.screenshot = c.screenshot;
+  }
+
+  if (c.testMatch !== undefined) {
+    if (
+      !Array.isArray(c.testMatch) ||
+      !(c.testMatch as unknown[]).every((v) => typeof v === "string")
+    ) {
+      console.error(
+        `[kaze] Config error: "testMatch" must be an array of strings (got ${JSON.stringify(c.testMatch)})`
+      );
+      process.exit(2);
+    }
+    result.testMatch = c.testMatch as string[];
+  }
+
+  return result;
+}
+
+// ---------------------------------------------------------------------------
 // loadConfig
 // ---------------------------------------------------------------------------
 
@@ -38,7 +115,7 @@ export async function loadConfig(cwd: string): Promise<KazeConfig> {
       // Use a cache-busting query param so repeated calls in tests get fresh modules.
       const url = pathToFileURL(p).href + "?t=" + Date.now();
       const mod = await import(url);
-      return (mod.default ?? mod) as KazeConfig;
+      return validateConfig(mod.default ?? mod);
     }
   }
   return {};

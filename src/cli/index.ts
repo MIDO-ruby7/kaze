@@ -97,9 +97,10 @@ const patterns = args; // may be empty → detect all spec files
       values.reporter === "dot" || values.reporter === "verbose"
         ? values.reporter
         : undefined;
-    // --screenshot=off → false (disabled); any other value or absent → undefined (defer to config)
+    // --screenshot=off → false; --screenshot=on → true; absent/other → undefined (defer to config)
     const cliScreenshot =
-      values.screenshot === "off" ? false : undefined;
+      values.screenshot === "off" ? false :
+      values.screenshot === "on"  ? true  : undefined;
 
     const config = mergeConfig(fileConfig, {
       workers: cliWorkers !== undefined && !isNaN(cliWorkers) ? cliWorkers : undefined,
