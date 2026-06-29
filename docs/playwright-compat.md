@@ -46,10 +46,10 @@ test('my test', async (page) => { ... });
 | API | Status | Notes |
 |-----|--------|-------|
 | `page.goto(url, opts?)` | Supported | |
-| `page.click(selector)` | Supported | |
-| `page.fill(selector, value)` | Supported | |
-| `page.textContent(selector)` | Supported | |
-| `page.waitForSelector(selector, opts?)` | Supported | |
+| `page.click(selector)` | Supported | auto-waiting; default timeout 30000ms; accepts `{ timeout }` option; retries if element detaches between selector check and click |
+| `page.fill(selector, value)` | Supported | auto-waiting; default timeout 30000ms; accepts `{ timeout }` option; retries if element detaches between selector check and fill |
+| `page.textContent(selector)` | Supported | auto-waiting; default timeout 30000ms; accepts `{ timeout }` option |
+| `page.waitForSelector(selector, opts?)` | Supported | polls every 100ms; default timeout 30000ms; accepts `{ timeout }` option |
 | `page.locator(selector)` | Supported | Returns `Locator` |
 | `page.url()` | Supported | |
 | `page.close()` | Supported | |
@@ -68,9 +68,9 @@ test('my test', async (page) => { ... });
 | API | Status | Notes |
 |-----|--------|-------|
 | `page.locator(selector)` | Supported | |
-| `locator.click()` | Supported | |
-| `locator.fill(value)` | Supported | |
-| `locator.textContent()` | Supported | |
+| `locator.click()` | Supported | auto-waiting; default timeout 30000ms; accepts `{ timeout }` option; retries if element detaches between selector check and click |
+| `locator.fill(value)` | Supported | auto-waiting; default timeout 30000ms; accepts `{ timeout }` option; retries if element detaches between selector check and fill |
+| `locator.textContent()` | Supported | auto-waiting; default timeout 30000ms; accepts `{ timeout }` option |
 | `locator.nth(index)` | Not supported | — |
 | `locator.first()` / `locator.last()` | Not supported | — |
 | `locator.filter()` | Not supported | — |
