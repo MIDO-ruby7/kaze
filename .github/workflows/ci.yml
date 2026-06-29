@@ -41,3 +41,11 @@ jobs:
         run: pnpm test --reporter=verbose
         env:
           KAZE_SKIP_E2E: "1"
+
+      - name: Performance regression check
+        run: |
+          if [ -f benchmark/perf-results.json ]; then
+            npx tsx benchmark/perf-check.ts
+          else
+            echo "No perf-results.json found, skipping regression check"
+          fi

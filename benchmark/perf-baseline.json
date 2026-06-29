@@ -1,0 +1,8 @@
+{
+  "contextReset_ms": 10,
+  "navigate_ms": 100,
+  "evaluate_ms": 20,
+  "newContext_ms": 800,
+  "throughput_10_ms_per_test": 120,
+  "throughput_20_ms_per_test": 150
+}
