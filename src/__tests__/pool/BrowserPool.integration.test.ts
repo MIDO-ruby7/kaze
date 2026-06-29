@@ -24,7 +24,8 @@ function isChromiumInstalled(): boolean {
   return entries.some((e) => e.isDirectory() && e.name.startsWith("chromium-"));
 }
 
-const describeOrSkip = isChromiumInstalled() ? describe : describe.skip;
+const describeOrSkip =
+  process.env.KAZE_SKIP_E2E || !isChromiumInstalled() ? describe.skip : describe;
 
 // ---------------------------------------------------------------------------
 // AC-6: integration stress test

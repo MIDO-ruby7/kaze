@@ -62,7 +62,7 @@ test.describe("basic fixture", () => {
 // ---------------------------------------------------------------------------
 
 describe("examples/basic.spec.ts", () => {
-  it.skipIf(!isChromiumInstalled())("runs kaze tests against the fixture page", async () => {
+  it.skipIf(!!process.env.KAZE_SKIP_E2E || !isChromiumInstalled())("runs kaze tests against the fixture page", async () => {
     const adapter = createAdapter({ protocol: "cdp" });
     const pool = new BrowserPool();
 

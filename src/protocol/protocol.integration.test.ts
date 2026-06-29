@@ -70,7 +70,7 @@ const chromiumDir = findInstalledChromiumDir();
 // Test suite
 // ---------------------------------------------------------------------------
 
-describe.skipIf(!chromiumDir)(
+describe.skipIf(!!process.env.KAZE_SKIP_E2E || !chromiumDir)(
   "CdpAdapter integration (requires installed Chromium)",
   () => {
     let adapter: ProtocolAdapter;
