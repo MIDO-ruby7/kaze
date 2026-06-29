@@ -5,6 +5,7 @@
  *       click(), fill(value), textContent()
  */
 
+import type { ClickOptions, FillOptions, TextContentOptions } from "./Page.js";
 import type { Page } from "./Page.js";
 
 export class Locator {
@@ -13,19 +14,19 @@ export class Locator {
     readonly selector: string,
   ) {}
 
-  /** Click the element. */
-  async click(): Promise<void> {
-    await this.page.click(this.selector);
+  /** Click the element. Waits for the element to appear. */
+  async click(opts?: ClickOptions): Promise<void> {
+    await this.page.click(this.selector, opts);
   }
 
-  /** Fill the element with a value. */
-  async fill(value: string): Promise<void> {
-    await this.page.fill(this.selector, value);
+  /** Fill the element with a value. Waits for the element to appear. */
+  async fill(value: string, opts?: FillOptions): Promise<void> {
+    await this.page.fill(this.selector, value, opts);
   }
 
-  /** Return the text content of the element. */
-  async textContent(): Promise<string | null> {
-    return this.page.textContent(this.selector);
+  /** Return the text content of the element. Waits for the element to appear. */
+  async textContent(opts?: TextContentOptions): Promise<string | null> {
+    return this.page.textContent(this.selector, opts);
   }
 
   /**

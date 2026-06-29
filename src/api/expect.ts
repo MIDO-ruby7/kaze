@@ -44,8 +44,12 @@ class LocatorExpect implements LocatorMatchers {
     let lastActual: string | null = null;
 
     while (Date.now() < deadline) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) break;
       try {
-        lastActual = await this.locator.textContent();
+        // Pass a short single-poll timeout so waitForSelector doesn't block
+        // longer than one polling interval, letting this outer loop retry.
+        lastActual = await this.locator.textContent({ timeout: POLL_INTERVAL_MS });
         if (lastActual !== null && lastActual.includes(expected)) return;
       } catch {
         // element may not exist yet — keep retrying

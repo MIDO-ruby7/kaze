@@ -36,19 +36,28 @@ describe("Locator", () => {
   });
 
   it("click delegates to page.click", async () => {
+    // waitForSelector resolves immediately, then dispatches click
+    (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValue(true);
     await locator.click();
     expect(adapter.dispatchEvent).toHaveBeenCalledWith("ctx-1", "#result", "click");
   });
 
   it("fill delegates to page.fill", async () => {
+    // waitForSelector resolves first (true), then fill evaluate is called
+    (adapter.evaluate as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(undefined);
     await locator.fill("world");
-    expect(adapter.evaluate).toHaveBeenCalledTimes(1);
-    const expr = (adapter.evaluate as ReturnType<typeof vi.fn>).mock.calls[0][1];
+    const calls = (adapter.evaluate as ReturnType<typeof vi.fn>).mock.calls;
+    // second call is the fill evaluate
+    const expr = calls[1][1] as string;
     expect(expr).toContain("world");
   });
 
   it("textContent delegates to page.textContent", async () => {
-    (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValue("foo");
+    (adapter.evaluate as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(true)   // waitForSelector poll - found
+      .mockResolvedValueOnce("foo"); // textContent evaluate
     const text = await locator.textContent();
     expect(text).toBe("foo");
   });
@@ -59,5 +68,58 @@ describe("Locator", () => {
 
   it("getPage returns the page", () => {
     expect(locator.getPage()).toBe(page);
+  });
+
+  // AC-5: Locator methods propagate timeout option
+  it("locator click retries until element is found", async () => {
+    (adapter.evaluate as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+
+    await locator.click();
+    expect(adapter.dispatchEvent).toHaveBeenCalledWith("ctx-1", "#result", "click");
+  });
+
+  it("locator fill retries until element is found", async () => {
+    (adapter.evaluate as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+
+    await locator.fill("world");
+    const calls = (adapter.evaluate as ReturnType<typeof vi.fn>).mock.calls;
+    const fillCall = calls.find((c: unknown[]) => (c[1] as string).includes("el.value"));
+    expect(fillCall).toBeDefined();
+  });
+
+  it("locator textContent retries until element is found", async () => {
+    (adapter.evaluate as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce("foo");
+
+    const text = await locator.textContent();
+    expect(text).toBe("foo");
+  });
+
+  it("locator click accepts timeout option", async () => {
+    (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+    await locator.click({ timeout: 5000 });
+    expect(adapter.dispatchEvent).toHaveBeenCalledWith("ctx-1", "#result", "click");
+  });
+
+  it("locator fill accepts timeout option", async () => {
+    (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+    await locator.fill("world", { timeout: 5000 });
+    const calls = (adapter.evaluate as ReturnType<typeof vi.fn>).mock.calls;
+    const fillCall = calls.find((c: unknown[]) => (c[1] as string).includes("world"));
+    expect(fillCall).toBeDefined();
+  });
+
+  it("locator textContent accepts timeout option", async () => {
+    (adapter.evaluate as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce("bar");
+    const text = await locator.textContent({ timeout: 5000 });
+    expect(text).toBe("bar");
   });
 });

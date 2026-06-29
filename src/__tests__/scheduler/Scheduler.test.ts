@@ -489,6 +489,36 @@ describe("Scheduler", () => {
   });
 
   // -------------------------------------------------------------------------
+  // AC-11: ctx._cancel() is invoked when a test times out
+  // -------------------------------------------------------------------------
+  describe("AC-11: page cancellation on Scheduler timeout", () => {
+    it("calls ctx._cancel() when the test times out", async () => {
+      const { pool } = makeMockPool(1);
+      const scheduler = new Scheduler(pool);
+
+      let cancelCalled = false;
+
+      scheduler.enqueue([
+        {
+          id: "cancel-test",
+          name: "Cancel test",
+          timeout: 30,
+          fn: async (ctx) => {
+            // Register a mock _cancel on the ctx to detect Scheduler calling it
+            ctx._cancel = () => { cancelCalled = true; };
+            await new Promise((resolve) => setTimeout(resolve, 500));
+          },
+        },
+      ]);
+
+      const [result] = await scheduler.run();
+
+      expect(result.status).toBe("timedOut");
+      expect(cancelCalled).toBe(true);
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // GAP-3: _writeLastRun failure does not throw from run()
   // -------------------------------------------------------------------------
   describe("GAP-3: last-run.json write failure does not throw", () => {

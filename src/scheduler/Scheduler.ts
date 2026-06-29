@@ -121,7 +121,13 @@ export class Scheduler {
       let timerId: ReturnType<typeof setTimeout> | undefined;
       const timeoutPromise = new Promise<never>((_, reject) => {
         timerId = setTimeout(
-          () => reject(new TimeoutError(`Test "${test.name}" timed out after ${timeout}ms`)),
+          () => {
+            // AC-11: Cancel any in-flight Page polling (waitForSelector loops)
+            // before the context is returned to the pool, so the stale coroutine
+            // does not issue evaluate calls against the recycled context.
+            ctx._cancel?.();
+            reject(new TimeoutError(`Test "${test.name}" timed out after ${timeout}ms`));
+          },
           timeout,
         );
       });
