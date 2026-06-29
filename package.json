@@ -19,8 +19,10 @@
   "engines": {
     "node": ">=22"
   },
+  "bin": { "kaze": "./dist/cli/index.js" },
   "scripts": {
     "build": "tsup",
+    "cli": "tsx src/cli/index.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
