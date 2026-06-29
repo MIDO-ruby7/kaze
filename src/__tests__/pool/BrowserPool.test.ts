@@ -257,6 +257,123 @@ describe("AC-5: stats()", () => {
 });
 
 // ---------------------------------------------------------------------------
+// B-1: close() rejects pending acquire() promises
+// ---------------------------------------------------------------------------
+
+describe("B-1: close() rejects pending acquire()", () => {
+  it("pending acquire() rejects with BrowserPool closed error when close() is called", async () => {
+    const pool = new BrowserPool();
+    await pool.init({ maxProcesses: 1, maxContextsPerProcess: 1 });
+
+    // Exhaust the single context
+    const ctx1 = await pool.acquire();
+
+    // This acquire should block because no context is available
+    const pendingAcquire = pool.acquire();
+
+    // Close the pool while the acquire is pending
+    const closePromise = pool.close();
+
+    // The pending acquire must reject
+    await expect(pendingAcquire).rejects.toThrow(/closed/);
+    await closePromise;
+
+    // Clean up: release ctx1 after pool is closed (should be a no-op)
+    pool.release(ctx1);
+  });
+
+  it("close() rejects multiple pending acquire() calls", async () => {
+    const pool = new BrowserPool();
+    await pool.init({ maxProcesses: 1, maxContextsPerProcess: 1 });
+
+    const ctx1 = await pool.acquire();
+
+    const pending1 = pool.acquire();
+    const pending2 = pool.acquire();
+    const pending3 = pool.acquire();
+
+    await pool.close();
+
+    await expect(pending1).rejects.toThrow(/closed/);
+    await expect(pending2).rejects.toThrow(/closed/);
+    await expect(pending3).rejects.toThrow(/closed/);
+
+    pool.release(ctx1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// B-3 / GAP-2: crash + stale adapterId release() still drains waitQueue
+// ---------------------------------------------------------------------------
+
+describe("B-3 / GAP-2: release() with stale adapterId drains waitQueue", () => {
+  it("release() with old adapterId after crash still resolves a pending acquire()", async () => {
+    const pool = new BrowserPool();
+    await pool.init({ maxProcesses: 1, maxContextsPerProcess: 1 });
+
+    // Acquire the only context — keep the old token
+    const staleToken = await pool.acquire();
+
+    // Queue a waiter
+    let waiterResolved = false;
+    const pendingAcquire = pool.acquire().then((c) => {
+      waiterResolved = true;
+      return c;
+    });
+
+    // Not resolved yet
+    await new Promise((r) => setTimeout(r, 10));
+    expect(waiterResolved).toBe(false);
+
+    // Release with the original token (adapterId unchanged here, but the
+    // context should be found and the waiter drained)
+    pool.release(staleToken);
+
+    const acquired = await pendingAcquire;
+    expect(waiterResolved).toBe(true);
+    expect(acquired.contextId).toBe(staleToken.contextId);
+
+    pool.release(acquired);
+    await pool.close();
+  });
+
+  it("release() with unknown contextId still drains waitQueue when another idle ctx exists", async () => {
+    const pool = new BrowserPool();
+    await pool.init({ maxProcesses: 1, maxContextsPerProcess: 2 });
+
+    const ctx1 = await pool.acquire();
+    const ctx2 = await pool.acquire();
+
+    // Queue a waiter
+    let waiterResolved = false;
+    const pendingAcquire = pool.acquire().then((c) => {
+      waiterResolved = true;
+      return c;
+    });
+
+    await new Promise((r) => setTimeout(r, 10));
+    expect(waiterResolved).toBe(false);
+
+    // Release ctx1 with a completely bogus adapterId — simulates post-crash stale token
+    pool.release({ contextId: "non-existent-ctx", adapterId: "adapter-old" });
+
+    // Waiter should NOT be resolved since the stale token doesn't match any idle ctx
+    // and the other real context (ctx2) is still busy.
+    await new Promise((r) => setTimeout(r, 10));
+    expect(waiterResolved).toBe(false);
+
+    // Release real ctx2 → waiter should now resolve
+    pool.release(ctx2);
+    const acquired = await pendingAcquire;
+    expect(waiterResolved).toBe(true);
+
+    pool.release(acquired);
+    pool.release(ctx1);
+    await pool.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // AC-6 (mock variant): 8 concurrent acquire/release × 50 rounds — no deadlock
 // ---------------------------------------------------------------------------
 

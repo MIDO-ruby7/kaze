@@ -53,6 +53,12 @@ export interface BrowserPoolInitOptions {
   executablePath?: string;
 }
 
+/** A waiter entry in the wait queue. */
+interface WaitQueueEntry {
+  resolve: (ctx: PooledContext) => void;
+  reject: (err: Error) => void;
+}
+
 const MAX_CRASH_RESTARTS = 3;
 
 // ---------------------------------------------------------------------------
@@ -61,7 +67,7 @@ const MAX_CRASH_RESTARTS = 3;
 
 export class BrowserPool {
   private processes: ManagedProcess[] = [];
-  private waitQueue: Array<(ctx: PooledContext) => void> = [];
+  private waitQueue: WaitQueueEntry[] = [];
   private closed = false;
   private totalCrashes = 0;
   private nextAdapterSeq = 0;
@@ -104,20 +110,33 @@ export class BrowserPool {
     }
 
     // No idle context available — queue the caller (FIFO)
-    return new Promise<PooledContext>((resolve) => {
-      this.waitQueue.push(resolve);
+    return new Promise<PooledContext>((resolve, reject) => {
+      this.waitQueue.push({ resolve, reject });
     });
   }
 
   release(pooled: PooledContext): void {
-    const managed = this._findManagedContext(pooled.contextId, pooled.adapterId);
-    if (!managed) return; // already cleaned up (e.g. process crashed)
+    // Try exact match first (normal path).
+    let managed = this._findManagedContext(pooled.contextId, pooled.adapterId);
+
+    // GAP-2 / B-3: If the process crashed, its adapterId was reassigned. Fall
+    // back to a contextId-only search so the release is not silently swallowed.
+    if (!managed) {
+      managed = this._findManagedContextById(pooled.contextId);
+    }
+
+    if (!managed) {
+      // Context is gone entirely (e.g. exceeded restart limit). Still drain the
+      // queue so waiters get a chance with other idle contexts.
+      this._drainQueue();
+      return;
+    }
 
     // If there are waiters, hand off immediately
     const waiter = this.waitQueue.shift();
     if (waiter) {
       // Keep state as busy and hand off to the next caller
-      waiter({ contextId: managed.contextId, adapterId: managed.adapterId });
+      waiter.resolve({ contextId: managed.contextId, adapterId: managed.adapterId });
       return;
     }
 
@@ -132,22 +151,16 @@ export class BrowserPool {
     if (this.closed) return;
     this.closed = true;
 
-    // Reject all queued waiters
+    // B-1: Reject all queued waiters so their promises settle immediately.
     const err = new Error("BrowserPool closed while waiting for a context");
     for (const waiter of this.waitQueue) {
-      // Resolve with a rejection by wrapping — we can't reject a resolve callback,
-      // so we push a dummy resolve that will never get a real context.
-      // Instead, replace the queue with a sentinel that rejects the promise.
-      void waiter; // handled below
+      waiter.reject(err);
     }
-    this.waitQueue.length = 0;
+    this.waitQueue = [];
 
     // Close all processes
     await Promise.all(this.processes.map((p) => this._closeProcess(p)));
     this.processes = [];
-
-    // Suppress unused-variable lint on err
-    void err;
   }
 
   // -------------------------------------------------------------------------
@@ -197,6 +210,19 @@ export class BrowserPool {
   ): ManagedContext | undefined {
     const proc = this.processes.find((p) => p.adapterId === adapterId);
     return proc?.contexts.find((c) => c.contextId === contextId);
+  }
+
+  /**
+   * GAP-2: Find a context by contextId alone, ignoring adapterId.
+   * Used after a crash when the adapterId has been reassigned but the caller
+   * still holds the old PooledContext token.
+   */
+  private _findManagedContextById(contextId: string): ManagedContext | undefined {
+    for (const proc of this.processes) {
+      const ctx = proc.contexts.find((c) => c.contextId === contextId);
+      if (ctx) return ctx;
+    }
+    return undefined;
   }
 
   private async _spawnProcess(port: number, contextsPerProcess: number): Promise<void> {
@@ -254,19 +280,40 @@ export class BrowserPool {
 
     const probe = async (): Promise<void> => {
       if (this.closed || proc.restarting) return;
-      // Use the first idle context for probing if available, else skip
+
+      // Use the first idle context for probing if available.
       const ctx = proc.contexts.find((c) => c.state === "idle");
       if (!ctx) {
-        setTimeout(() => void probe(), PROBE_INTERVAL_MS);
+        // GAP-3: No idle context to probe. Try a lightweight ping via newContext
+        // to detect if the process is still alive. We immediately close the
+        // test context to avoid leaking it.
+        try {
+          const testCtxId = await proc.adapter.newContext();
+          await proc.adapter.closeContext(testCtxId);
+        } catch {
+          // Process is unresponsive — treat as crash
+          if (!this.closed && !proc.restarting) {
+            void this._handleCrash(proc);
+          }
+          return;
+        }
+        if (!this.closed && !proc.restarting) {
+          setTimeout(() => void probe(), PROBE_INTERVAL_MS);
+        }
         return;
       }
+
+      // B-2: Mark the context busy before evaluating to prevent concurrent use.
+      ctx.state = "busy";
       try {
         await proc.adapter.evaluate(ctx.contextId, "1");
+        ctx.state = "idle";
         if (!this.closed && !proc.restarting) {
           setTimeout(() => void probe(), PROBE_INTERVAL_MS);
         }
       } catch {
-        // Probe failed — treat as crash
+        // Probe failed — restore state then treat as crash
+        ctx.state = "idle";
         if (!this.closed && !proc.restarting) {
           void this._handleCrash(proc);
         }
@@ -318,18 +365,12 @@ export class BrowserPool {
       proc.contexts = [];
       proc.restarting = false;
 
-      // Recreate the same number of contexts as before (use the original per-process count)
-      const contextCount = Math.max(1, proc.contexts.length);
-      // Note: proc.contexts was just cleared; we need the original count.
-      // We'll use 1 as minimum and rely on the previously computed sizing.
-      // A pragmatic choice: re-create contexts based on what was there before crash.
-      // Since we cleared it, use 1 as safe fallback.
+      // Recreate contexts using the current sizing config (AC-1: sizing.contextsPerProcess).
       const resources = probeHostResources();
       const sizing = computePoolSizing(resources, {
         maxProcesses: this.initOpts.maxProcesses,
         maxContextsPerProcess: this.initOpts.maxContextsPerProcess,
       });
-      void contextCount;
 
       await Promise.all(
         Array.from({ length: sizing.contextsPerProcess }, () =>
@@ -353,7 +394,7 @@ export class BrowserPool {
       if (!ctx) break;
       ctx.state = "busy";
       const waiter = this.waitQueue.shift()!;
-      waiter({ contextId: ctx.contextId, adapterId: ctx.adapterId });
+      waiter.resolve({ contextId: ctx.contextId, adapterId: ctx.adapterId });
     }
   }
 
@@ -375,4 +416,5 @@ export class BrowserPool {
       // best-effort
     }
   }
+
 }
