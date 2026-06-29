@@ -39,26 +39,37 @@ describe("Page", () => {
   });
 
   it("click delegates to adapter.dispatchEvent with 'click'", async () => {
+    // waitForSelector resolves immediately (element found), then dispatches
+    (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValue(true);
     await page.click("#btn");
     expect(adapter.dispatchEvent).toHaveBeenCalledWith("ctx-1", "#btn", "click");
   });
 
   it("fill evaluates JS to set value and dispatch events", async () => {
+    // waitForSelector resolves first (true), then fill evaluate is called
+    (adapter.evaluate as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(true)   // waitForSelector poll - found
+      .mockResolvedValueOnce(undefined); // fill evaluate
     await page.fill("#input", "hello");
-    expect(adapter.evaluate).toHaveBeenCalledTimes(1);
-    const expr = (adapter.evaluate as ReturnType<typeof vi.fn>).mock.calls[0][1];
+    const calls = (adapter.evaluate as ReturnType<typeof vi.fn>).mock.calls;
+    // second call is the fill evaluate (index 1)
+    const expr = calls[1][1] as string;
     expect(expr).toContain("el.value");
     expect(expr).toContain("hello");
   });
 
   it("textContent returns string from evaluate", async () => {
-    (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValue("Hello World");
+    (adapter.evaluate as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(true)          // waitForSelector poll - found
+      .mockResolvedValueOnce("Hello World"); // textContent evaluate
     const text = await page.textContent("#heading");
     expect(text).toBe("Hello World");
   });
 
-  it("textContent returns null when element not found", async () => {
-    (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+  it("textContent returns null when element not found (returns null text)", async () => {
+    (adapter.evaluate as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(true)  // waitForSelector poll - found
+      .mockResolvedValueOnce(null); // textContent evaluate returns null
     const text = await page.textContent("#missing");
     expect(text).toBeNull();
   });
@@ -85,8 +96,78 @@ describe("Page", () => {
   it("waitForSelector rejects on timeout", async () => {
     (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValue(false);
     await expect(page.waitForSelector("#el", { timeout: 150 })).rejects.toThrow(
-      /Timeout waiting for selector/,
+      /Timeout \d+ms waiting for selector/,
     );
+  });
+
+  // AC-6: timeout error message contains selector and timeout value
+  it("waitForSelector error message contains selector and timeout ms", async () => {
+    (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+    await expect(page.waitForSelector("#submit", { timeout: 300 })).rejects.toThrow(
+      'Timeout 300ms waiting for selector "#submit"',
+    );
+  });
+
+  // AC-1: click waits for element before dispatching
+  it("click retries until element is found, then dispatches", async () => {
+    (adapter.evaluate as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+
+    await page.click("#btn");
+    expect(adapter.dispatchEvent).toHaveBeenCalledWith("ctx-1", "#btn", "click");
+  });
+
+  it("click throws timeout error when element never appears", async () => {
+    (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+    await expect(page.click("#btn", { timeout: 200 })).rejects.toThrow(
+      'Timeout 200ms waiting for selector "#btn"',
+    );
+  });
+
+  // AC-2: fill waits for element before filling
+  it("fill retries until element is found, then fills", async () => {
+    (adapter.evaluate as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+
+    await page.fill("#input", "hello");
+    const calls = (adapter.evaluate as ReturnType<typeof vi.fn>).mock.calls;
+    // first call is waitForSelector polling, subsequent calls are the fill logic
+    const fillCall = calls.find((c: unknown[]) => (c[1] as string).includes("el.value"));
+    expect(fillCall).toBeDefined();
+  });
+
+  it("fill throws timeout error when element never appears", async () => {
+    (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+    await expect(page.fill("#input", "value", { timeout: 200 })).rejects.toThrow(
+      'Timeout 200ms waiting for selector "#input"',
+    );
+  });
+
+  // AC-3: textContent waits for element
+  it("textContent retries until element is found, then returns text", async () => {
+    (adapter.evaluate as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(false)  // waitForSelector first poll
+      .mockResolvedValueOnce(true)   // waitForSelector second poll - found
+      .mockResolvedValueOnce("Hello World"); // textContent evaluate
+
+    const text = await page.textContent("#heading");
+    expect(text).toBe("Hello World");
+  });
+
+  it("textContent throws timeout error when element never appears", async () => {
+    (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+    await expect(page.textContent("#heading", { timeout: 200 })).rejects.toThrow(
+      'Timeout 200ms waiting for selector "#heading"',
+    );
+  });
+
+  // AC-7: individual timeout option
+  it("click accepts { timeout } option", async () => {
+    (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+    await page.click("#slow-btn", { timeout: 5000 });
+    expect(adapter.dispatchEvent).toHaveBeenCalledWith("ctx-1", "#slow-btn", "click");
   });
 
   it("url() evaluates window.location.href", async () => {
@@ -101,8 +182,14 @@ describe("Page", () => {
 
   describe("selector escaping (B-1)", () => {
     it("fill escapes attribute selector with single quotes", async () => {
+      // waitForSelector uses evaluate first (returns true), then fill evaluate
+      (adapter.evaluate as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(undefined);
       await page.fill("[data-id='123']", "hello");
-      const expr = (adapter.evaluate as ReturnType<typeof vi.fn>).mock.calls[0][1] as string;
+      const calls = (adapter.evaluate as ReturnType<typeof vi.fn>).mock.calls;
+      // Second call (index 1) is the fill evaluate with the escaped selector
+      const expr = calls[1][1] as string;
       // The selector single-quote must be escaped to \' in the JS string
       expect(expr).toContain("[data-id=\\'123\\']");
     });

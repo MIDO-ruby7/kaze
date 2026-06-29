@@ -20,6 +20,21 @@ export interface WaitForSelectorOptions {
   timeout?: number;
 }
 
+export interface ClickOptions {
+  /** Maximum wait time for the element to appear in milliseconds. Defaults to 30000. */
+  timeout?: number;
+}
+
+export interface FillOptions {
+  /** Maximum wait time for the element to appear in milliseconds. Defaults to 30000. */
+  timeout?: number;
+}
+
+export interface TextContentOptions {
+  /** Maximum wait time for the element to appear in milliseconds. Defaults to 30000. */
+  timeout?: number;
+}
+
 export class Page {
   /** The contextId of the backing ProtocolAdapter context. */
   readonly contextId: string;
@@ -36,13 +51,15 @@ export class Page {
     await this.adapter.navigate(this.contextId, url);
   }
 
-  /** Click the first element matching `selector`. */
-  async click(selector: string): Promise<void> {
+  /** Click the first element matching `selector`. Waits for the element to appear. */
+  async click(selector: string, opts?: ClickOptions): Promise<void> {
+    await this.waitForSelector(selector, opts);
     await this.adapter.dispatchEvent(this.contextId, selector, "click");
   }
 
-  /** Fill an input element matching `selector` with `value`. */
-  async fill(selector: string, value: string): Promise<void> {
+  /** Fill an input element matching `selector` with `value`. Waits for the element to appear. */
+  async fill(selector: string, value: string, opts?: FillOptions): Promise<void> {
+    await this.waitForSelector(selector, opts);
     // Focus and set .value via JS, then dispatch input/change events.
     const escapedSel = escapeSelector(selector);
     const escapedVal = value.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
@@ -59,8 +76,9 @@ export class Page {
     );
   }
 
-  /** Return the text content of the first element matching `selector`. */
-  async textContent(selector: string): Promise<string | null> {
+  /** Return the text content of the first element matching `selector`. Waits for the element to appear. */
+  async textContent(selector: string, opts?: TextContentOptions): Promise<string | null> {
+    await this.waitForSelector(selector, opts);
     const escapedSel = escapeSelector(selector);
     const result = await this.adapter.evaluate(
       this.contextId,
@@ -93,7 +111,7 @@ export class Page {
     }
 
     throw new Error(
-      `Timeout waiting for selector "${selector}" after ${timeout}ms`,
+      `Timeout ${timeout}ms waiting for selector "${selector}"`,
     );
   }
 

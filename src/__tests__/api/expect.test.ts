@@ -34,17 +34,22 @@ describe("expect(locator).toHaveText", () => {
   });
 
   it("resolves when text matches immediately", async () => {
-    (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValue("Hello World");
+    // waitForSelector polls first (truthy = found), then textContent evaluate
+    (adapter.evaluate as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce("Hello World") // waitForSelector poll (truthy → found)
+      .mockResolvedValueOnce("Hello World"); // textContent evaluate
     const locator = page.locator("#result");
     await vitestExpect(expect(locator).toHaveText("Hello")).resolves.toBeUndefined();
   });
 
   it("retries and resolves when text eventually matches", async () => {
     const mock = adapter.evaluate as ReturnType<typeof vi.fn>;
+    // Each textContent call: waitForSelector poll + textContent evaluate
     mock
-      .mockResolvedValueOnce("loading...")
-      .mockResolvedValueOnce("loading...")
-      .mockResolvedValueOnce("done");
+      .mockResolvedValueOnce("loading...") // 1st textContent: waitForSelector (truthy → found)
+      .mockResolvedValueOnce("loading...") // 1st textContent: textContent evaluate
+      .mockResolvedValueOnce("done")       // 2nd textContent: waitForSelector (truthy → found)
+      .mockResolvedValueOnce("done");      // 2nd textContent: textContent evaluate
 
     const locator = page.locator("#result");
     await vitestExpect(
@@ -53,6 +58,7 @@ describe("expect(locator).toHaveText", () => {
   });
 
   it("throws AssertionError on timeout", async () => {
+    // waitForSelector poll returns truthy, textContent evaluate returns "nope" repeatedly
     (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValue("nope");
     const locator = page.locator("#result");
     await vitestExpect(
