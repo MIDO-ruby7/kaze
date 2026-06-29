@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>kaze test fixture</title>
+  </head>
+  <body>
+    <h1 id="heading">kaze Fixture Page</h1>
+
+    <button id="btn">Click me</button>
+    <p id="result">waiting</p>
+
+    <input id="input" type="text" placeholder="type here" />
+    <p id="echo"></p>
+
+    <script>
+      document.getElementById("btn").addEventListener("click", function () {
+        document.getElementById("result").textContent = "done";
+      });
+
+      document.getElementById("input").addEventListener("input", function () {
+        document.getElementById("echo").textContent = this.value;
+      });
+    </script>
+  </body>
+</html>
