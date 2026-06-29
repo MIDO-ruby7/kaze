@@ -1,0 +1,12 @@
+{
+  "timestamp": "2026-06-29T13:00:38.530Z",
+  "gitCommit": "5d37842",
+  "results": {
+    "contextReset_ms": 219.9,
+    "navigate_ms": 99.4,
+    "evaluate_ms": 1.8,
+    "newContext_ms": 775.3,
+    "throughput_10_ms_per_test": 152,
+    "throughput_20_ms_per_test": 123.6
+  }
+}
