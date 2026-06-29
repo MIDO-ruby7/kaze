@@ -10,7 +10,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 
 import type { BrowserPool } from "../../pool/BrowserPool.js";
 import type { PooledContext } from "../../pool/types.js";
@@ -93,6 +93,9 @@ async function removeLastRun(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 describe("Scheduler", () => {
+  beforeEach(async () => {
+    await removeLastRun();
+  });
   afterEach(async () => {
     await removeLastRun();
   });

@@ -10,6 +10,7 @@
  * AC-10: filename length is capped (200 chars for sanitized name, fallback to "unnamed")
  */
 
+import * as fsSync from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 
@@ -69,6 +70,7 @@ function makeMockPoolNoScreenshot(): BrowserPool {
 }
 
 const SCREENSHOTS_DIR = path.join(process.cwd(), ".kaze", "screenshots");
+const LAST_RUN_PATH = path.join(process.cwd(), ".kaze", "last-run.json");
 
 async function cleanScreenshotsDir(): Promise<void> {
   try {
@@ -78,16 +80,22 @@ async function cleanScreenshotsDir(): Promise<void> {
   }
 }
 
+function cleanLastRun(): void {
+  try { fsSync.unlinkSync(LAST_RUN_PATH); } catch { /* ファイルがなければ無視 */ }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
 describe("Screenshot capture", () => {
   beforeEach(async () => {
+    cleanLastRun();
     await cleanScreenshotsDir();
   });
   afterEach(async () => {
     await cleanScreenshotsDir();
+    cleanLastRun();
   });
 
   // -------------------------------------------------------------------------
