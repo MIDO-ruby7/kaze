@@ -92,8 +92,11 @@ export class Page {
    *        deadline is reached.
    */
   async click(selector: string, opts?: ClickOptions): Promise<void> {
-    const deadline = Date.now() + (opts?.timeout ?? 30_000);
+    const timeout = opts?.timeout ?? 30_000;
+    const deadline = Date.now() + timeout;
+    let executed = false;
     while (Date.now() < deadline) {
+      executed = true;
       const remaining = deadline - Date.now();
       await this.waitForSelector(selector, { timeout: remaining });
       try {
@@ -103,6 +106,9 @@ export class Page {
         if (isElementNotFound(err) && Date.now() < deadline) continue;
         throw err;
       }
+    }
+    if (!executed) {
+      throw new Error(`Timeout ${timeout}ms waiting for selector "${escapeSelector(selector)}"`);
     }
   }
 
@@ -115,11 +121,14 @@ export class Page {
    *        waitForSelector→evaluate sequence is retried until the deadline.
    */
   async fill(selector: string, value: string, opts?: FillOptions): Promise<void> {
-    const deadline = Date.now() + (opts?.timeout ?? 30_000);
+    const timeout = opts?.timeout ?? 30_000;
+    const deadline = Date.now() + timeout;
     // Focus and set .value via JS, then dispatch input/change events.
     const escapedSel = escapeSelector(selector);
     const escapedVal = value.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+    let executed = false;
     while (Date.now() < deadline) {
+      executed = true;
       const remaining = deadline - Date.now();
       await this.waitForSelector(selector, { timeout: remaining });
       try {
@@ -139,6 +148,9 @@ export class Page {
         if (isElementNotFound(err) && Date.now() < deadline) continue;
         throw err;
       }
+    }
+    if (!executed) {
+      throw new Error(`Timeout ${timeout}ms waiting for selector "${escapeSelector(selector)}"`);
     }
   }
 

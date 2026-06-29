@@ -289,6 +289,27 @@ describe("Page", () => {
     });
   });
 
+  // -------------------------------------------------------------------------
+  // B-1: timeout:0 — loop never executes, must throw immediately
+  // -------------------------------------------------------------------------
+  describe("B-1: timeout:0 throws immediately", () => {
+    it("click throws timeout error immediately when timeout is 0", async () => {
+      await expect(page.click("#btn", { timeout: 0 })).rejects.toThrow(
+        /Timeout 0ms waiting for selector/,
+      );
+      // adapter should never be called
+      expect(adapter.evaluate).not.toHaveBeenCalled();
+      expect(adapter.dispatchEvent).not.toHaveBeenCalled();
+    });
+
+    it("fill throws timeout error immediately when timeout is 0", async () => {
+      await expect(page.fill("#input", "hello", { timeout: 0 })).rejects.toThrow(
+        /Timeout 0ms waiting for selector/,
+      );
+      expect(adapter.evaluate).not.toHaveBeenCalled();
+    });
+  });
+
   describe("selector escaping (B-1)", () => {
     it("fill escapes attribute selector with single quotes", async () => {
       // waitForSelector uses evaluate first (returns true), then fill evaluate
