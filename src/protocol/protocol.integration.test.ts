@@ -4,6 +4,9 @@
  * These tests require a headless Chromium binary in ~/.kaze/browsers/.
  * If no browser is found, the suite is skipped so CI can still pass
  * before the browser-downloader step has run.
+ *
+ * GAP-4: This file imports only from ./index.js (the public factory API).
+ * No direct imports from CdpAdapter.ts or ProtocolAdapter.ts.
  */
 
 import fs from "node:fs";
@@ -12,14 +15,43 @@ import path from "node:path";
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { resolveChromiumExecutable } from "./CdpAdapter.js";
-import type { ProtocolAdapter } from "./ProtocolAdapter.js";
-
 import { createAdapter } from "./index.js";
+import type { ProtocolAdapter } from "./index.js";
 
 // ---------------------------------------------------------------------------
 // Pre-flight: locate Chromium
 // ---------------------------------------------------------------------------
+
+/** Platform-specific binary names to search for inside the install directory. */
+const CHROMIUM_BIN_NAMES =
+  process.platform === "darwin"
+    ? ["Google Chrome for Testing", "chrome", "Chromium"]
+    : process.platform === "win32"
+      ? ["chrome.exe"]
+      : ["chrome", "chromium", "chrome-linux"];
+
+function findFileRecursive(dir: string, name: string): string | undefined {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      const found = findFileRecursive(full, name);
+      if (found) return found;
+    } else if (entry.name === name) {
+      return full;
+    }
+  }
+  return undefined;
+}
+
+function resolveChromiumExecutable(installDir: string): string {
+  for (const bin of CHROMIUM_BIN_NAMES) {
+    const found = findFileRecursive(installDir, bin);
+    if (found) return found;
+  }
+  throw new Error(
+    `Could not find Chromium executable in ${installDir}. Looked for: ${CHROMIUM_BIN_NAMES.join(", ")}`,
+  );
+}
 
 function findInstalledChromiumDir(): string | undefined {
   const root = path.join(os.homedir(), ".kaze", "browsers");

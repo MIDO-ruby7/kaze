@@ -11,7 +11,8 @@ import { CdpAdapter, type CdpAdapterOptions } from "./CdpAdapter.js";
 import type { ProtocolAdapter } from "./ProtocolAdapter.js";
 
 export type { ProtocolAdapter, ContextId, EvaluateResult } from "./ProtocolAdapter.js";
-export type { CdpAdapterOptions } from "./CdpAdapter.js";
+// GAP-4: CdpAdapterOptions is intentionally NOT re-exported here.
+// Callers must use CreateAdapterOptions and never import CDP-internal types directly.
 
 export type SupportedProtocol = "cdp"; // 'bidi' will be added in a future PR
 

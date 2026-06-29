@@ -132,13 +132,22 @@ async function waitForDevTools(port: number, timeoutMs = 10_000): Promise<void> 
 // CdpSession — a single WebSocket connection to a CDP target
 // ---------------------------------------------------------------------------
 
+/** GAP-2: 30-second timeout for each CDP send call */
+const SEND_TIMEOUT_MS = 30_000;
+
 class CdpSession {
   private ws: WebSocket;
   private nextId = 1;
   private pending = new Map<
     number,
-    { resolve: (r: Record<string, unknown>) => void; reject: (e: Error) => void }
+    {
+      resolve: (r: Record<string, unknown>) => void;
+      reject: (e: Error) => void;
+      timer: ReturnType<typeof setTimeout>;
+    }
   >();
+  /** GAP-2: track whether this session has been closed */
+  private closed = false;
 
   private constructor(ws: WebSocket) {
     this.ws = ws;
@@ -152,6 +161,10 @@ class CdpSession {
     });
     const session = new CdpSession(ws);
     ws.addEventListener("message", (ev) => session.handleMessage(ev.data as string));
+    // GAP-2: sweep pending on WebSocket close event
+    ws.addEventListener("close", () => {
+      session.rejectAllPending(new Error("WebSocket closed unexpectedly"));
+    });
     return session;
   }
 
@@ -165,6 +178,7 @@ class CdpSession {
     if (msg.id !== undefined) {
       const pending = this.pending.get(msg.id);
       if (pending) {
+        clearTimeout(pending.timer);
         this.pending.delete(msg.id);
         if (msg.error) {
           pending.reject(new Error(`CDP error ${msg.error.code}: ${msg.error.message}`));
@@ -175,18 +189,77 @@ class CdpSession {
     }
   }
 
+  /** GAP-2: reject and clear all pending promises */
+  private rejectAllPending(error: Error): void {
+    for (const [, entry] of this.pending) {
+      clearTimeout(entry.timer);
+      entry.reject(error);
+    }
+    this.pending.clear();
+  }
+
   send<T extends Record<string, unknown>>(method: string, params?: Record<string, unknown>): Promise<T> {
+    // GAP-2: immediately reject if already closed
+    if (this.closed) {
+      return Promise.reject(new Error("CdpSession is already closed"));
+    }
     return new Promise((resolve, reject) => {
       const id = this.nextId++;
+      // GAP-2: 30-second per-call timeout
+      const timer = setTimeout(() => {
+        if (this.pending.has(id)) {
+          this.pending.delete(id);
+          reject(
+            new Error(`CDP send timed out after ${SEND_TIMEOUT_MS}ms for method: ${method}`),
+          );
+        }
+      }, SEND_TIMEOUT_MS);
       this.pending.set(id, {
         resolve: (r) => resolve(r as T),
         reject,
+        timer,
       });
       this.ws.send(JSON.stringify({ id, method, params: params ?? {} }));
     });
   }
 
+  /**
+   * Register a one-shot listener for a CDP event.
+   * Returns a Promise that resolves with the event params when the event fires.
+   * GAP-1: used by navigate() to await Page.loadEventFired.
+   */
+  waitForEvent(
+    method: string,
+    timeoutMs: number = SEND_TIMEOUT_MS,
+  ): Promise<Record<string, unknown>> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.ws.removeEventListener("message", handler);
+        reject(new Error(`Timeout waiting for CDP event "${method}" after ${timeoutMs}ms`));
+      }, timeoutMs);
+
+      const handler = (ev: MessageEvent): void => {
+        let msg: CdpResponse;
+        try {
+          msg = JSON.parse(ev.data as string) as CdpResponse;
+        } catch {
+          return;
+        }
+        if (msg.method === method) {
+          clearTimeout(timer);
+          this.ws.removeEventListener("message", handler);
+          resolve(msg.params ?? {});
+        }
+      };
+
+      this.ws.addEventListener("message", handler);
+    });
+  }
+
+  /** GAP-2: close() rejects all pending promises before closing the socket */
   close(): void {
+    this.closed = true;
+    this.rejectAllPending(new Error("CdpSession was closed"));
     this.ws.close();
   }
 }
@@ -214,6 +287,8 @@ export class CdpAdapter implements ProtocolAdapter {
   /** Map from our opaque ContextId → CdpSession for that target */
   private targetSessions = new Map<ContextId, CdpSession>();
   private nextContextSeq = 1;
+  /** GAP-3: track the temporary profile directory so close() can delete it */
+  private tmpDir: string | null = null;
 
   constructor(options: CdpAdapterOptions = {}) {
     const port = options.port ?? 9222;
@@ -231,7 +306,8 @@ export class CdpAdapter implements ProtocolAdapter {
 
   async launch(): Promise<void> {
     const { executablePath, port } = this.options;
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "kaze-profile-"));
+    // GAP-3: remember tmpDir so close() can remove it
+    this.tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "kaze-profile-"));
 
     this.process = spawn(
       executablePath,
@@ -241,7 +317,7 @@ export class CdpAdapter implements ProtocolAdapter {
         "--no-sandbox",
         "--disable-gpu",
         "--disable-dev-shm-usage",
-        `--user-data-dir=${tmpDir}`,
+        `--user-data-dir=${this.tmpDir}`,
       ],
       { stdio: "ignore" },
     );
@@ -303,7 +379,10 @@ export class CdpAdapter implements ProtocolAdapter {
 
   async navigate(contextId: ContextId, url: string): Promise<void> {
     const session = this.getSession(contextId);
+    // GAP-1: arm the listener before sending the command so no event is missed
+    const loadFired = session.waitForEvent("Page.loadEventFired");
     await session.send("Page.navigate", { url });
+    await loadFired;
   }
 
   async evaluate(contextId: ContextId, expression: string): Promise<EvaluateResult> {
@@ -351,6 +430,16 @@ export class CdpAdapter implements ProtocolAdapter {
         setTimeout(resolve, 3000); // safety timeout
       });
       this.process = null;
+    }
+
+    // GAP-3: delete the temporary profile directory
+    if (this.tmpDir) {
+      try {
+        fs.rmSync(this.tmpDir, { recursive: true, force: true });
+      } catch {
+        // best-effort cleanup; do not throw
+      }
+      this.tmpDir = null;
     }
   }
 
