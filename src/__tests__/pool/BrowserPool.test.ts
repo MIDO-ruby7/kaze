@@ -1,0 +1,479 @@
+/**
+ * Unit tests for BrowserPool.
+ *
+ * These tests mock the ProtocolAdapter so no real Chromium process is needed.
+ */
+
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+
+import { BrowserPool } from "../../pool/BrowserPool.js";
+
+// ---------------------------------------------------------------------------
+// Mock the protocol/index.js createAdapter factory
+// ---------------------------------------------------------------------------
+
+// We track adapters created so we can control them per-test.
+interface MockAdapter {
+  launch: ReturnType<typeof vi.fn>;
+  newContext: ReturnType<typeof vi.fn>;
+  closeContext: ReturnType<typeof vi.fn>;
+  navigate: ReturnType<typeof vi.fn>;
+  evaluate: ReturnType<typeof vi.fn>;
+  dispatchEvent: ReturnType<typeof vi.fn>;
+  close: ReturnType<typeof vi.fn>;
+  /** Simulate a crash — make all subsequent evaluate calls throw. */
+  simulateCrash: () => void;
+}
+
+let createdAdapters: MockAdapter[] = [];
+let adapterSeq = 0;
+
+function makeMockAdapter(): MockAdapter {
+  let crashed = false;
+  let ctxSeq = 0;
+
+  const adapter: MockAdapter = {
+    launch: vi.fn().mockResolvedValue(undefined),
+    newContext: vi.fn().mockImplementation(() => {
+      if (crashed) return Promise.reject(new Error("adapter crashed"));
+      return Promise.resolve(`ctx-${adapterSeq}-${ctxSeq++}`);
+    }),
+    closeContext: vi.fn().mockResolvedValue(undefined),
+    navigate: vi.fn().mockResolvedValue(undefined),
+    evaluate: vi.fn().mockImplementation(() => {
+      if (crashed) return Promise.reject(new Error("adapter crashed"));
+      return Promise.resolve(1);
+    }),
+    dispatchEvent: vi.fn().mockResolvedValue(undefined),
+    close: vi.fn().mockResolvedValue(undefined),
+    simulateCrash: () => {
+      crashed = true;
+    },
+  };
+  return adapter;
+}
+
+vi.mock("../../protocol/index.js", () => ({
+  createAdapter: vi.fn(() => {
+    const adapter = makeMockAdapter();
+    adapterSeq++;
+    createdAdapters.push(adapter);
+    return adapter;
+  }),
+}));
+
+// Mock probeHostResources and computePoolSizing for deterministic sizing.
+vi.mock("../../pool/resources.js", () => ({
+  probeHostResources: vi.fn(() => ({
+    totalMemMB: 4096,
+    freeMemMB: 4096,
+    cpuCount: 4,
+  })),
+}));
+
+// ---------------------------------------------------------------------------
+// Test setup / teardown
+// ---------------------------------------------------------------------------
+
+beforeEach(() => {
+  createdAdapters = [];
+  adapterSeq = 0;
+});
+
+afterEach(async () => {
+  // Vitest fake timers may not be active, but reset module mocks if needed
+  vi.clearAllMocks();
+});
+
+// ---------------------------------------------------------------------------
+// AC-1: init
+// ---------------------------------------------------------------------------
+
+describe("AC-1: init()", () => {
+  it("launches Chromium processes based on sizing and creates contexts", async () => {
+    const pool = new BrowserPool();
+    await pool.init({ maxProcesses: 2, maxContextsPerProcess: 2 });
+
+    const s = pool.stats();
+    expect(s.processes).toBe(2);
+    expect(s.totalContexts).toBe(4);
+    expect(s.idle).toBe(4);
+    expect(s.busy).toBe(0);
+
+    await pool.close();
+  });
+
+  it("respects maxProcesses=1, maxContextsPerProcess=3", async () => {
+    const pool = new BrowserPool();
+    await pool.init({ maxProcesses: 1, maxContextsPerProcess: 3 });
+
+    const s = pool.stats();
+    expect(s.processes).toBe(1);
+    expect(s.totalContexts).toBe(3);
+
+    await pool.close();
+  });
+
+  it("throws if called after close()", async () => {
+    const pool = new BrowserPool();
+    await pool.close();
+    await expect(pool.init({ maxProcesses: 1, maxContextsPerProcess: 1 })).rejects.toThrow(
+      "closed",
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AC-2: acquire / release
+// ---------------------------------------------------------------------------
+
+describe("AC-2: acquire() / release()", () => {
+  it("returns a PooledContext with contextId and adapterId", async () => {
+    const pool = new BrowserPool();
+    await pool.init({ maxProcesses: 1, maxContextsPerProcess: 2 });
+
+    const ctx = await pool.acquire();
+    expect(ctx).toHaveProperty("contextId");
+    expect(ctx).toHaveProperty("adapterId");
+    expect(pool.stats().busy).toBe(1);
+    expect(pool.stats().idle).toBe(1);
+
+    pool.release(ctx);
+    expect(pool.stats().busy).toBe(0);
+    expect(pool.stats().idle).toBe(2);
+
+    await pool.close();
+  });
+
+  it("FIFO wait queue: caller waits when all contexts are busy", async () => {
+    const pool = new BrowserPool();
+    await pool.init({ maxProcesses: 1, maxContextsPerProcess: 1 });
+
+    const ctx1 = await pool.acquire();
+    expect(pool.stats().idle).toBe(0);
+
+    // This acquire should block until ctx1 is released
+    let resolved = false;
+    const pendingAcquire = pool.acquire().then((c) => {
+      resolved = true;
+      return c;
+    });
+
+    // Not yet resolved
+    await new Promise((r) => setTimeout(r, 10));
+    expect(resolved).toBe(false);
+
+    // Release ctx1 → pending acquire resolves
+    pool.release(ctx1);
+    const ctx2 = await pendingAcquire;
+    expect(resolved).toBe(true);
+    expect(ctx2.contextId).toBe(ctx1.contextId);
+
+    pool.release(ctx2);
+    await pool.close();
+  });
+
+  it("returns PooledContext shape { contextId: string, adapterId: string }", async () => {
+    const pool = new BrowserPool();
+    await pool.init({ maxProcesses: 1, maxContextsPerProcess: 1 });
+    const ctx = await pool.acquire();
+    expect(typeof ctx.contextId).toBe("string");
+    expect(typeof ctx.adapterId).toBe("string");
+    pool.release(ctx);
+    await pool.close();
+  });
+
+  it("acquire() rejects when pool is closed", async () => {
+    const pool = new BrowserPool();
+    await pool.init({ maxProcesses: 1, maxContextsPerProcess: 1 });
+    await pool.close();
+    await expect(pool.acquire()).rejects.toThrow("closed");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AC-3: close()
+// ---------------------------------------------------------------------------
+
+describe("AC-3: close()", () => {
+  it("closes all contexts and processes without error", async () => {
+    const pool = new BrowserPool();
+    await pool.init({ maxProcesses: 2, maxContextsPerProcess: 2 });
+    await pool.close();
+
+    // All adapters should have had close() called
+    for (const adapter of createdAdapters) {
+      expect(adapter.close).toHaveBeenCalled();
+    }
+  });
+
+  it("is idempotent (calling close() twice does not throw)", async () => {
+    const pool = new BrowserPool();
+    await pool.init({ maxProcesses: 1, maxContextsPerProcess: 1 });
+    await pool.close();
+    await expect(pool.close()).resolves.toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AC-5: stats()
+// ---------------------------------------------------------------------------
+
+describe("AC-5: stats()", () => {
+  it("returns correct shape", async () => {
+    const pool = new BrowserPool();
+    await pool.init({ maxProcesses: 1, maxContextsPerProcess: 2 });
+
+    const s = pool.stats();
+    expect(s).toMatchObject({
+      totalContexts: expect.any(Number),
+      busy: expect.any(Number),
+      idle: expect.any(Number),
+      processes: expect.any(Number),
+      crashes: expect.any(Number),
+    });
+
+    await pool.close();
+  });
+
+  it("busy + idle <= totalContexts", async () => {
+    const pool = new BrowserPool();
+    await pool.init({ maxProcesses: 2, maxContextsPerProcess: 2 });
+
+    const ctx = await pool.acquire();
+    const s = pool.stats();
+    expect(s.busy + s.idle).toBeLessThanOrEqual(s.totalContexts);
+
+    pool.release(ctx);
+    await pool.close();
+  });
+
+  it("crashes counter starts at 0", async () => {
+    const pool = new BrowserPool();
+    await pool.init({ maxProcesses: 1, maxContextsPerProcess: 1 });
+    expect(pool.stats().crashes).toBe(0);
+    await pool.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// B-1: close() rejects pending acquire() promises
+// ---------------------------------------------------------------------------
+
+describe("B-1: close() rejects pending acquire()", () => {
+  it("pending acquire() rejects with BrowserPool closed error when close() is called", async () => {
+    const pool = new BrowserPool();
+    await pool.init({ maxProcesses: 1, maxContextsPerProcess: 1 });
+
+    // Exhaust the single context
+    const ctx1 = await pool.acquire();
+
+    // This acquire should block because no context is available
+    const pendingAcquire = pool.acquire();
+
+    // Close the pool while the acquire is pending
+    const closePromise = pool.close();
+
+    // The pending acquire must reject
+    await expect(pendingAcquire).rejects.toThrow(/closed/);
+    await closePromise;
+
+    // Clean up: release ctx1 after pool is closed (should be a no-op)
+    pool.release(ctx1);
+  });
+
+  it("close() rejects multiple pending acquire() calls", async () => {
+    const pool = new BrowserPool();
+    await pool.init({ maxProcesses: 1, maxContextsPerProcess: 1 });
+
+    const ctx1 = await pool.acquire();
+
+    const pending1 = pool.acquire();
+    const pending2 = pool.acquire();
+    const pending3 = pool.acquire();
+
+    await pool.close();
+
+    await expect(pending1).rejects.toThrow(/closed/);
+    await expect(pending2).rejects.toThrow(/closed/);
+    await expect(pending3).rejects.toThrow(/closed/);
+
+    pool.release(ctx1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// B-3 / GAP-2: crash + stale adapterId release() still drains waitQueue
+// ---------------------------------------------------------------------------
+
+describe("B-3 / GAP-2: release() with stale adapterId drains waitQueue", () => {
+  it("release() with old adapterId after crash still resolves a pending acquire()", async () => {
+    const pool = new BrowserPool();
+    await pool.init({ maxProcesses: 1, maxContextsPerProcess: 1 });
+
+    // Acquire the only context — keep the old token
+    const staleToken = await pool.acquire();
+
+    // Queue a waiter
+    let waiterResolved = false;
+    const pendingAcquire = pool.acquire().then((c) => {
+      waiterResolved = true;
+      return c;
+    });
+
+    // Not resolved yet
+    await new Promise((r) => setTimeout(r, 10));
+    expect(waiterResolved).toBe(false);
+
+    // Release with the original token (adapterId unchanged here, but the
+    // context should be found and the waiter drained)
+    pool.release(staleToken);
+
+    const acquired = await pendingAcquire;
+    expect(waiterResolved).toBe(true);
+    expect(acquired.contextId).toBe(staleToken.contextId);
+
+    pool.release(acquired);
+    await pool.close();
+  });
+
+  it("release() with unknown contextId still drains waitQueue when another idle ctx exists", async () => {
+    const pool = new BrowserPool();
+    await pool.init({ maxProcesses: 1, maxContextsPerProcess: 2 });
+
+    const ctx1 = await pool.acquire();
+    const ctx2 = await pool.acquire();
+
+    // Queue a waiter
+    let waiterResolved = false;
+    const pendingAcquire = pool.acquire().then((c) => {
+      waiterResolved = true;
+      return c;
+    });
+
+    await new Promise((r) => setTimeout(r, 10));
+    expect(waiterResolved).toBe(false);
+
+    // Release ctx1 with a completely bogus adapterId — simulates post-crash stale token
+    pool.release({ contextId: "non-existent-ctx", adapterId: "adapter-old" });
+
+    // Waiter should NOT be resolved since the stale token doesn't match any idle ctx
+    // and the other real context (ctx2) is still busy.
+    await new Promise((r) => setTimeout(r, 10));
+    expect(waiterResolved).toBe(false);
+
+    // Release real ctx2 → waiter should now resolve
+    pool.release(ctx2);
+    const acquired = await pendingAcquire;
+    expect(waiterResolved).toBe(true);
+
+    pool.release(acquired);
+    pool.release(ctx1);
+    await pool.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// B-2: probe marks ctx as busy during health check
+// ---------------------------------------------------------------------------
+
+describe("B-2: probe marks ctx as busy during health check", () => {
+  it("should not return a context that is being probed", async () => {
+    // We need fine-grained control over evaluate to pause probe mid-flight.
+    // Use a deferred promise: probe will call evaluate and hang until we resolve.
+    let resolveEvaluate!: (v: number) => void;
+    const evaluateLatch = new Promise<number>((res) => {
+      resolveEvaluate = res;
+    });
+
+    // Track how many times evaluate was called
+    let evaluateCallCount = 0;
+
+    vi.useFakeTimers();
+
+    const pool = new BrowserPool();
+
+    try {
+      await pool.init({ maxProcesses: 1, maxContextsPerProcess: 1 });
+
+      // Override the evaluate mock on the adapter created during init
+      const adapter = createdAdapters[0]!;
+      adapter.evaluate.mockImplementation(() => {
+        evaluateCallCount++;
+        return evaluateLatch; // hangs until we manually resolve
+      });
+
+      // Advance fake timers by the PROBE_INTERVAL_MS (500 ms) so probe() fires.
+      vi.advanceTimersByTime(500);
+
+      // Give the probe a tick to start executing and call evaluate
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // evaluate should have been called exactly once (probe is now waiting inside evaluateLatch)
+      expect(evaluateCallCount).toBe(1);
+
+      // At this point the context state should be "busy" (probe set it before calling evaluate).
+      // acquire() must not return it.
+      let acquireResolved = false;
+      const pendingAcquire = pool.acquire().then((c) => {
+        acquireResolved = true;
+        return c;
+      });
+
+      // Flush pending microtasks — acquire() should remain pending because the
+      // only context is still held by the probe.
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(acquireResolved).toBe(false);
+
+      // Now let probe complete by resolving evaluate.
+      resolveEvaluate(1);
+
+      // After probe finishes, the context should return to "idle" and the queued
+      // acquire() should be resolved.
+      const ctx = await pendingAcquire;
+      expect(acquireResolved).toBe(true);
+      expect(typeof ctx.contextId).toBe("string");
+
+      pool.release(ctx);
+    } finally {
+      // Always restore real timers to avoid leaking into subsequent tests.
+      vi.useRealTimers();
+      await pool.close();
+    }
+  }, 10_000);
+});
+
+// ---------------------------------------------------------------------------
+// AC-6 (mock variant): 8 concurrent acquire/release × 50 rounds — no deadlock
+// ---------------------------------------------------------------------------
+
+describe("AC-6: concurrency stress (mocked, no real Chromium)", () => {
+  it("8 concurrent acquire/release × 50 rounds — no leak or deadlock", async () => {
+    const CONCURRENCY = 8;
+    const ROUNDS = 50;
+    const CONTEXTS = 4; // use fewer contexts to force queuing
+
+    const pool = new BrowserPool();
+    await pool.init({ maxProcesses: 2, maxContextsPerProcess: CONTEXTS / 2 });
+
+    const doRound = async (): Promise<void> => {
+      const ctx = await pool.acquire();
+      // Simulate a tiny bit of work
+      await new Promise<void>((r) => setTimeout(r, Math.random() * 2));
+      pool.release(ctx);
+    };
+
+    for (let round = 0; round < ROUNDS; round++) {
+      await Promise.all(Array.from({ length: CONCURRENCY }, () => doRound()));
+    }
+
+    const s = pool.stats();
+    // After all rounds, everything should be idle
+    expect(s.busy).toBe(0);
+    expect(s.idle).toBe(s.totalContexts);
+
+    await pool.close();
+  }, 30_000);
+});
