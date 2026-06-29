@@ -98,7 +98,7 @@ function findLatestInstalledChromiumDir(): string {
 /** Fetch JSON from a local HTTP endpoint. */
 function httpGetJson<T>(url: string): Promise<T> {
   return new Promise((resolve, reject) => {
-    http.get(url, (res) => {
+    const req = http.get(url, (res) => {
       let raw = "";
       res.setEncoding("utf8");
       res.on("data", (chunk: string) => (raw += chunk));
@@ -111,6 +111,7 @@ function httpGetJson<T>(url: string): Promise<T> {
       });
       res.on("error", reject);
     });
+    req.on("error", reject);
   });
 }
 
@@ -400,11 +401,12 @@ export class CdpAdapter implements ProtocolAdapter {
 
   async dispatchEvent(contextId: ContextId, selector: string, event: string): Promise<void> {
     const escaped = selector.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+    const escapedEvent = event.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
     const expression = `
       (function() {
         const el = document.querySelector('${escaped}');
         if (!el) throw new Error('Element not found: ${escaped}');
-        el.dispatchEvent(new Event('${event}', { bubbles: true, cancelable: true }));
+        el.dispatchEvent(new Event('${escapedEvent}', { bubbles: true, cancelable: true }));
       })()
     `;
     await this.evaluate(contextId, expression);
