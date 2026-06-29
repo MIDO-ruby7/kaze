@@ -10,6 +10,18 @@ import * as os from "node:os";
 
 import { loadConfig, mergeConfig } from "../../cli/config.js";
 import type { KazeConfig } from "../../cli/config.js";
+import { test as kazeTest, collectTestCases, _resetRegistry } from "../../api/test.js";
+import type { ProtocolAdapter } from "../../protocol/index.js";
+
+// ---------------------------------------------------------------------------
+// Minimal stub AdapterResolver for collectTestCases
+// ---------------------------------------------------------------------------
+
+const stubPool = {
+  getAdapter(_id: string): ProtocolAdapter {
+    return {} as ProtocolAdapter;
+  },
+};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -132,58 +144,61 @@ describe("mergeConfig grep / grepInvert (AC-7)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// grep filtering logic (AC-5, AC-6)
+// grep filtering via collectTestCases (AC-5, AC-6)
 // ---------------------------------------------------------------------------
 
 describe("grep filtering (AC-5, AC-6)", () => {
+  beforeEach(() => {
+    _resetRegistry();
+  });
+
   it("AC-5: grep filters test cases by regex match", () => {
-    const cases = [
-      { name: "login: success" },
-      { name: "logout: success" },
-      { name: "login: failure" },
-    ];
-    const grep = "login";
-    const filtered = cases.filter((c) => new RegExp(grep).test(c.name));
-    expect(filtered).toHaveLength(2);
-    expect(filtered.map((c) => c.name)).toEqual(["login: success", "login: failure"]);
+    // Register three tests using the real kaze test API
+    kazeTest("login: success", async () => {});
+    kazeTest("logout: success", async () => {});
+    kazeTest("login: failure", async () => {});
+
+    // collectTestCases with grep option — exercises the actual implementation
+    const cases = collectTestCases(stubPool, { grep: "login" });
+    expect(cases).toHaveLength(2);
+    expect(cases.map((c) => c.name)).toEqual(["login: success", "login: failure"]);
   });
 
   it("AC-6: grepInvert excludes test cases matching regex", () => {
-    const cases = [
-      { name: "login: success" },
-      { name: "logout: success" },
-      { name: "login: failure" },
-    ];
-    const grepInvert = "login";
-    const filtered = cases.filter((c) => !new RegExp(grepInvert).test(c.name));
-    expect(filtered).toHaveLength(1);
-    expect(filtered[0]!.name).toBe("logout: success");
+    kazeTest("login: success", async () => {});
+    kazeTest("logout: success", async () => {});
+    kazeTest("login: failure", async () => {});
+
+    const cases = collectTestCases(stubPool, { grepInvert: "login" });
+    expect(cases).toHaveLength(1);
+    expect(cases[0]!.name).toBe("logout: success");
   });
 
   it("AC-5: grep with complex regex pattern", () => {
-    const cases = [
-      { name: "auth > login" },
-      { name: "auth > logout" },
-      { name: "profile > update" },
-    ];
-    const grep = "^auth";
-    const filtered = cases.filter((c) => new RegExp(grep).test(c.name));
-    expect(filtered).toHaveLength(2);
+    kazeTest.describe("auth", () => {
+      kazeTest("login", async () => {});
+      kazeTest("logout", async () => {});
+    });
+    kazeTest.describe("profile", () => {
+      kazeTest("update", async () => {});
+    });
+
+    // "^auth" matches names that start with "auth >" — test names are "auth > login", etc.
+    const cases = collectTestCases(stubPool, { grep: "^auth" });
+    expect(cases).toHaveLength(2);
+    expect(cases.map((c) => c.name)).toEqual(["auth > login", "auth > logout"]);
   });
 
   it("AC-5 + AC-6: grep and grepInvert can be combined", () => {
-    const cases = [
-      { name: "auth > login success" },
-      { name: "auth > login failure" },
-      { name: "auth > logout" },
-    ];
-    const grep = "auth";
-    const grepInvert = "failure";
-    const filtered = cases
-      .filter((c) => new RegExp(grep).test(c.name))
-      .filter((c) => !new RegExp(grepInvert).test(c.name));
-    expect(filtered).toHaveLength(2);
-    expect(filtered.map((c) => c.name)).toEqual([
+    kazeTest.describe("auth", () => {
+      kazeTest("login success", async () => {});
+      kazeTest("login failure", async () => {});
+      kazeTest("logout", async () => {});
+    });
+
+    const cases = collectTestCases(stubPool, { grep: "auth", grepInvert: "failure" });
+    expect(cases).toHaveLength(2);
+    expect(cases.map((c) => c.name)).toEqual([
       "auth > login success",
       "auth > logout",
     ]);

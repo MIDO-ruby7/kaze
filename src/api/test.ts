@@ -213,6 +213,17 @@ function scopeChain(scope: string): string[] {
   return chain;
 }
 
+// ---------------------------------------------------------------------------
+// collectTestCases options
+// ---------------------------------------------------------------------------
+
+export interface CollectOptions {
+  /** Regex pattern: only include tests whose name matches (AC-5). */
+  grep?: string;
+  /** Regex pattern: exclude tests whose name matches (AC-6). */
+  grepInvert?: string;
+}
+
 /**
  * Convert all registered `test(...)` calls into Scheduler-compatible TestCase
  * objects, wrapping each with beforeAll / afterAll / beforeEach / afterEach hooks.
@@ -224,7 +235,7 @@ function scopeChain(scope: string): string[] {
  *   afterEach (innermost → outermost)
  *   afterAll (innermost → outermost, once per scope when last test in scope)
  */
-export function collectTestCases(pool: AdapterResolver): TestCase[] {
+export function collectTestCases(pool: AdapterResolver, opts?: CollectOptions): TestCase[] {
   let pending = _registry.splice(0);
   const hooks = _hooks.splice(0);
 
@@ -232,6 +243,16 @@ export function collectTestCases(pool: AdapterResolver): TestCase[] {
   // only include tests whose full name is in _onlyNames.
   if (_onlyMode) {
     pending = pending.filter((p) => _onlyNames.has(p.name));
+  }
+
+  // Apply grep / grepInvert filters (AC-5, AC-6)
+  if (opts?.grep) {
+    const re = new RegExp(opts.grep);
+    pending = pending.filter((p) => re.test(p.name));
+  }
+  if (opts?.grepInvert) {
+    const re = new RegExp(opts.grepInvert);
+    pending = pending.filter((p) => !re.test(p.name));
   }
 
   // Reset only state so subsequent collectTestCases calls start fresh.
