@@ -24,3 +24,23 @@ export { collectTestCases } from "./api/test.js";
 // Re-export types for consumers
 export type { GotoOptions, WaitForSelectorOptions } from "./api/Page.js";
 export type { LocatorMatchers, PageMatchers } from "./api/expect.js";
+
+// ---------------------------------------------------------------------------
+// Config API (AC-5)
+// ---------------------------------------------------------------------------
+
+export type { KazeConfig } from "./cli/config.js";
+
+/**
+ * defineConfig — identity helper that enables TypeScript type inference
+ * for kaze.config.ts files.
+ *
+ * @example
+ * ```typescript
+ * import { defineConfig } from "kaze"
+ * export default defineConfig({ workers: 20 })
+ * ```
+ */
+export function defineConfig(config: import("./cli/config.js").KazeConfig): import("./cli/config.js").KazeConfig {
+  return config;
+}

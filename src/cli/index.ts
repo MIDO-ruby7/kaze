@@ -18,6 +18,7 @@ import { parseArgs } from "node:util";
 import { run } from "./runner.js";
 import { report } from "./reporter.js";
 import { watch } from "./watcher.js";
+import { loadConfig, mergeConfig } from "./config.js";
 import type { ReporterMode } from "./reporter.js";
 
 // ---------------------------------------------------------------------------
@@ -79,33 +80,51 @@ if (args[0] === "test") {
 const patterns = args; // may be empty → detect all spec files
 
 // ---------------------------------------------------------------------------
-// Option extraction
-// ---------------------------------------------------------------------------
-
-const workers =
-  typeof values.workers === "string" ? parseInt(values.workers, 10) : undefined;
-const timeout =
-  typeof values.timeout === "string" ? parseInt(values.timeout, 10) : undefined;
-const reporterMode: ReporterMode =
-  values.reporter === "dot" ? "dot" : "verbose";
-const watchMode = values.watch === true;
-// AC-4: --screenshot=off disables screenshot capture
-const screenshotEnabled = values.screenshot !== "off";
-
-// ---------------------------------------------------------------------------
 // Run
 // ---------------------------------------------------------------------------
 
 (async () => {
   try {
-    const runWorkers = workers && !isNaN(workers) ? workers : undefined;
-    const runTimeout = timeout && !isNaN(timeout) ? timeout : undefined;
+    // AC-1/AC-2: Load project-level config file
+    const fileConfig = await loadConfig(process.cwd());
+
+    // AC-3: Build CLI override object — only defined CLI flags override config
+    const cliWorkers =
+      typeof values.workers === "string" ? parseInt(values.workers, 10) : undefined;
+    const cliTimeout =
+      typeof values.timeout === "string" ? parseInt(values.timeout, 10) : undefined;
+    const cliReporter =
+      values.reporter === "dot" || values.reporter === "verbose"
+        ? values.reporter
+        : undefined;
+    // --screenshot=off → false; --screenshot=on → true; absent/other → undefined (defer to config)
+    const cliScreenshot =
+      values.screenshot === "off" ? false :
+      values.screenshot === "on"  ? true  : undefined;
+
+    const config = mergeConfig(fileConfig, {
+      workers: cliWorkers !== undefined && !isNaN(cliWorkers) ? cliWorkers : undefined,
+      timeout: cliTimeout !== undefined && !isNaN(cliTimeout) ? cliTimeout : undefined,
+      reporter: cliReporter,
+      screenshot: cliScreenshot,
+      // testMatch: patterns are handled separately below
+    });
+
+    const watchMode = values.watch === true;
+    const reporterMode: ReporterMode = config.reporter === "dot" ? "dot" : "verbose";
+
+    // testMatch from config is used only when no positional patterns are given (AC-2)
+    const effectivePatterns =
+      patterns.length > 0 ? patterns : config.testMatch;
+
+    // screenshot defaults to true if not set by config or CLI
+    const screenshotEnabled = config.screenshot !== false;
 
     if (watchMode) {
       await watch({
-        patterns,
-        workers: runWorkers,
-        timeout: runTimeout,
+        patterns: effectivePatterns ?? [],
+        workers: config.workers,
+        timeout: config.timeout,
         reporterMode,
         screenshot: screenshotEnabled,
       });
@@ -113,9 +132,11 @@ const screenshotEnabled = values.screenshot !== "off";
     }
 
     const results = await run({
-      patterns: patterns.length > 0 ? patterns : undefined,
-      workers: runWorkers,
-      timeout: runTimeout,
+      patterns: effectivePatterns && effectivePatterns.length > 0
+        ? effectivePatterns
+        : undefined,
+      workers: config.workers,
+      timeout: config.timeout,
       screenshot: screenshotEnabled,
     });
 
