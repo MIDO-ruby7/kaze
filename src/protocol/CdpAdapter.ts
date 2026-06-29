@@ -12,7 +12,8 @@ import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 
-import type { ContextId, EvaluateResult, ProtocolAdapter } from "./ProtocolAdapter.js";
+import type { ContextId, EvaluateResult, InterceptedRequest, ProtocolAdapter } from "./ProtocolAdapter.js";
+import type { FulfillOptions } from "../api/Route.js";
 
 // ---------------------------------------------------------------------------
 // Internal CDP types — never exported (AC-5)
@@ -501,6 +502,21 @@ export class CdpAdapter implements ProtocolAdapter {
   /** GAP-3: track the temporary profile directory so close() can delete it */
   private tmpDir: string | null = null;
 
+  /**
+   * Request interception — per-context request listeners.
+   * Key = contextId, Value = list of handlers registered via onRequest().
+   */
+  private requestListeners = new Map<ContextId, Set<(req: InterceptedRequest) => void>>();
+  /**
+   * Per-context interception enabled flag (used to start/stop Fetch.requestPaused listening).
+   */
+  private interceptionEnabled = new Map<ContextId, boolean>();
+  /**
+   * AC-9: Track paused requestIds per context so that resetContext can release
+   * any in-flight paused requests before calling Fetch.disable.
+   */
+  private pendingPausedRequests = new Map<ContextId, Set<string>>();
+
   constructor(options: CdpAdapterOptions = {}) {
     const port = options.port ?? 9222;
     let executablePath = options.executablePath;
@@ -608,6 +624,169 @@ export class CdpAdapter implements ProtocolAdapter {
     // For complete storage isolation, users can add an afterEach hook that clears
     // origin-specific storage (localStorage.clear(), etc.) before the reset.
     await session.send("Network.clearBrowserCookies");
+
+    // AC-4: disable request interception if it was enabled for this context
+    if (this.interceptionEnabled.get(contextId)) {
+      // AC-9: Release any in-flight paused requests before disabling Fetch.
+      // Fetch.disable stops future pauses but does not unblock already-paused
+      // requests; those need an explicit continueRequest response.
+      const pending = this.pendingPausedRequests.get(contextId);
+      if (pending && pending.size > 0) {
+        for (const requestId of pending) {
+          await session.send("Fetch.continueRequest", { requestId }).catch(() => {});
+        }
+        this.pendingPausedRequests.delete(contextId);
+      }
+      await session.send("Fetch.disable");
+      this.interceptionEnabled.delete(contextId);
+      this.requestListeners.delete(contextId);
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Request interception — ProtocolAdapter optional methods
+  // ---------------------------------------------------------------------------
+
+  async enableRequestInterception(contextId: ContextId): Promise<void> {
+    const session = this.getSession(contextId);
+    if (this.interceptionEnabled.get(contextId)) return;
+
+    // Enable Fetch domain interception for all requests
+    await session.send("Fetch.enable", {
+      patterns: [{ urlPattern: "*" }],
+    });
+    this.interceptionEnabled.set(contextId, true);
+    this.requestListeners.set(contextId, new Set());
+    this.pendingPausedRequests.set(contextId, new Set());
+
+    // Start listening loop for Fetch.requestPaused events
+    this._startRequestPausedLoop(contextId, session);
+  }
+
+  async disableRequestInterception(contextId: ContextId): Promise<void> {
+    if (!this.interceptionEnabled.get(contextId)) return;
+    const session = this.getSession(contextId);
+
+    // B-1: Drain in-flight paused requests before disabling (same pattern as resetContext).
+    // Fetch.disable stops future pauses but does not unblock already-paused requests;
+    // those need an explicit continueRequest response or they will hang.
+    const pending = this.pendingPausedRequests.get(contextId);
+    if (pending && pending.size > 0) {
+      await Promise.all([...pending].map((reqId) =>
+        session.send("Fetch.continueRequest", { requestId: reqId }).catch(() => {}),
+      ));
+      pending.clear();
+    }
+
+    await session.send("Fetch.disable");
+    this.interceptionEnabled.delete(contextId);
+    this.requestListeners.delete(contextId);
+    this.pendingPausedRequests.delete(contextId);
+  }
+
+  async fulfillRequest(contextId: ContextId, requestId: string, opts: FulfillOptions): Promise<void> {
+    const session = this.getSession(contextId);
+    const body = opts.json !== undefined
+      ? JSON.stringify(opts.json)
+      : (opts.body ?? "");
+
+    const headers: Array<{ name: string; value: string }> = [];
+    if (opts.json !== undefined) {
+      headers.push({ name: "content-type", value: "application/json" });
+    }
+    if (opts.headers) {
+      for (const [name, value] of Object.entries(opts.headers)) {
+        headers.push({ name, value });
+      }
+    }
+
+    await session.send("Fetch.fulfillRequest", {
+      requestId,
+      responseCode: opts.status ?? 200,
+      responseHeaders: headers,
+      body: Buffer.from(body).toString("base64"),
+    });
+    // AC-9: Request is no longer paused once responded to
+    this.pendingPausedRequests.get(contextId)?.delete(requestId);
+  }
+
+  async continueRequest(contextId: ContextId, requestId: string): Promise<void> {
+    const session = this.getSession(contextId);
+    await session.send("Fetch.continueRequest", { requestId });
+    // AC-9: Request is no longer paused once continued
+    this.pendingPausedRequests.get(contextId)?.delete(requestId);
+  }
+
+  async abortRequest(contextId: ContextId, requestId: string): Promise<void> {
+    const session = this.getSession(contextId);
+    await session.send("Fetch.failRequest", { requestId, errorReason: "Aborted" });
+    // AC-9: Request is no longer paused once aborted
+    this.pendingPausedRequests.get(contextId)?.delete(requestId);
+  }
+
+  onRequest(
+    contextId: ContextId,
+    handler: (req: InterceptedRequest) => void,
+  ): () => void {
+    const listeners = this.requestListeners.get(contextId);
+    if (!listeners) return () => {};
+    listeners.add(handler);
+    return () => listeners.delete(handler);
+  }
+
+  /**
+   * Start a background loop that listens for Fetch.requestPaused events and
+   * dispatches them to registered handlers.
+   * The loop exits when interception is disabled for this context or when the
+   * session is closed. A waitForEvent timeout (60s) causes the loop to continue
+   * so that a quiet page does not stop interception.
+   */
+  private _startRequestPausedLoop(contextId: ContextId, session: CdpPageSession): void {
+    const pump = async (): Promise<void> => {
+      while (this.interceptionEnabled.has(contextId)) {
+        try {
+          const params = await session.waitForEvent("Fetch.requestPaused", 60_000);
+
+          if (!this.interceptionEnabled.has(contextId)) {
+            // Interception was disabled while we were waiting. The request is
+            // still paused — release it so it doesn't hang.
+            const staleId = params.requestId as string;
+            void session.send("Fetch.continueRequest", { requestId: staleId }).catch(() => {});
+            return;
+          }
+
+          const requestId = params.requestId as string;
+          const url = (params.request as { url: string }).url;
+          const req: InterceptedRequest = { requestId, url };
+
+          // AC-9: Track this paused request so resetContext can release it
+          this.pendingPausedRequests.get(contextId)?.add(requestId);
+
+          const listeners = this.requestListeners.get(contextId);
+          if (listeners && listeners.size > 0) {
+            for (const handler of listeners) {
+              handler(req);
+            }
+          } else {
+            // No handlers — continue automatically
+            void this.continueRequest(contextId, requestId).catch(() => {});
+            this.pendingPausedRequests.get(contextId)?.delete(requestId);
+          }
+        } catch (err) {
+          // Distinguish between a 60s idle timeout (continue the loop) and a
+          // real session error such as WebSocket close (stop the loop).
+          const msg = err instanceof Error ? err.message : String(err);
+          if (msg.includes("Timeout") && this.interceptionEnabled.has(contextId)) {
+            // Timeout on a quiet page — keep listening
+            continue;
+          }
+          // Session closed or unexpected error — stop pumping
+          break;
+        }
+      }
+    };
+
+    void pump();
   }
 
   async closeContext(contextId: ContextId): Promise<void> {

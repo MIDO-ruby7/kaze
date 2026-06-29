@@ -5,11 +5,19 @@
  * through (AC-1, AC-5).
  */
 
+import type { FulfillOptions } from "../api/Route.js";
+
 /** Opaque identifier for a browser top-level context (tab / target). */
 export type ContextId = string;
 
 /** Result of evaluating a JavaScript expression in a context. */
 export type EvaluateResult = unknown;
+
+/** A request intercepted via enableRequestInterception. */
+export interface InterceptedRequest {
+  requestId: string;
+  url: string;
+}
 
 export interface ProtocolAdapter {
   /**
@@ -68,6 +76,46 @@ export interface ProtocolAdapter {
    * Optional — implementations that don't support this can omit it.
    */
   screenshot?(contextId: ContextId): Promise<Buffer>;
+
+  /**
+   * Enable HTTP request interception for the given context.
+   * Optional — omit if not supported.
+   */
+  enableRequestInterception?(contextId: ContextId): Promise<void>;
+
+  /**
+   * Disable HTTP request interception for the given context.
+   * Optional — omit if not supported.
+   */
+  disableRequestInterception?(contextId: ContextId): Promise<void>;
+
+  /**
+   * Respond to an intercepted request with a mock response.
+   * Optional — omit if not supported.
+   */
+  fulfillRequest?(contextId: ContextId, requestId: string, opts: FulfillOptions): Promise<void>;
+
+  /**
+   * Forward an intercepted request to the real server.
+   * Optional — omit if not supported.
+   */
+  continueRequest?(contextId: ContextId, requestId: string): Promise<void>;
+
+  /**
+   * Abort an intercepted request.
+   * Optional — omit if not supported.
+   */
+  abortRequest?(contextId: ContextId, requestId: string): Promise<void>;
+
+  /**
+   * Register a listener for intercepted requests in a context.
+   * Returns an unsubscribe function.
+   * Optional — omit if not supported.
+   */
+  onRequest?(
+    contextId: ContextId,
+    handler: (req: InterceptedRequest) => void,
+  ): () => void;
 
   /**
    * Close the browser process and release all resources.

@@ -13,6 +13,7 @@ import type { PooledContext } from "../pool/types.js";
 import type { ProtocolAdapter } from "../protocol/index.js";
 
 import { Locator } from "./Locator.js";
+import { Route, type FulfillOptions } from "./Route.js";
 import { escapeSelector } from "./utils.js";
 
 /** Returns true when `err` is the "Element not found" error thrown by the adapter. */
@@ -56,6 +57,23 @@ export class Page {
    */
   _cancelled = false;
 
+  /**
+   * AC-1/AC-3/AC-11: Registered route handlers keyed by a normalized string key.
+   * RegExp patterns are normalized via _routeKey() so that two RegExp instances
+   * with the same source + flags compare equal (Map identity would fail otherwise).
+   * Using Map to preserve insertion order.
+   */
+  private _routes = new Map<string, (route: Route) => void>();
+
+  /** Parallel map from normalized key → original pattern, used for matchesPattern(). */
+  private _routePatterns = new Map<string, string | RegExp>();
+
+  /**
+   * AC-1: Unsubscribe function returned by adapter.onRequest. Set once
+   * interception is enabled, cleared when disabled.
+   */
+  private _unsubscribeRequest: (() => void) | null = null;
+
   constructor(
     private readonly adapter: ProtocolAdapter,
     private readonly ctx: PooledContext,
@@ -64,6 +82,10 @@ export class Page {
     // AC-11: Register a cancellation hook on the context so that Scheduler can
     // stop polling after a test times out, without importing Page directly.
     ctx._cancel = () => this.cancel();
+    // AC-14: Register a reset hook so that BrowserPool can clear Page-level
+    // route state (handlers, subscriptions) before adapter.resetContext() is
+    // called.  This keeps Page and adapter state in sync across context reuse.
+    ctx._onReset = () => this.resetRoutes();
   }
 
   /**
@@ -218,6 +240,120 @@ export class Page {
   }
 
   /**
+   * AC-11: Normalize a route pattern to a stable string key.
+   * Two RegExp instances with the same source + flags produce the same key.
+   */
+  private _routeKey(pattern: string | RegExp): string {
+    if (typeof pattern === "string") return pattern;
+    return `__regexp__${pattern.source}__${pattern.flags}`;
+  }
+
+  /**
+   * AC-1: Intercept requests matching `pattern` with `handler`.
+   * Pattern can be a string (exact match or glob with **) or RegExp.
+   */
+  async route(pattern: string | RegExp, handler: (route: Route) => void): Promise<void> {
+    const wasEmpty = this._routes.size === 0;
+    const key = this._routeKey(pattern);
+    this._routes.set(key, handler);
+    this._routePatterns.set(key, pattern);
+
+    if (wasEmpty) {
+      // Enable interception on first route registration
+      await this.adapter.enableRequestInterception?.(this.contextId);
+
+      // Register a single listener that dispatches to matching handlers
+      if (this.adapter.onRequest) {
+        this._unsubscribeRequest = this.adapter.onRequest(
+          this.contextId,
+          (req) => this._handleInterceptedRequest(req),
+        );
+      }
+    }
+  }
+
+  /**
+   * AC-3: Remove the interceptor for `pattern`.
+   * If no routes remain, disables interception.
+   */
+  async unroute(pattern: string | RegExp): Promise<void> {
+    const key = this._routeKey(pattern);
+    this._routes.delete(key);
+    this._routePatterns.delete(key);
+
+    if (this._routes.size === 0) {
+      await this._disableInterception();
+    }
+  }
+
+  /**
+   * AC-4: Called by context reset logic to clear all routes and disable interception.
+   */
+  async resetRoutes(): Promise<void> {
+    this._routes.clear();
+    this._routePatterns.clear();
+    await this._disableInterception();
+  }
+
+  private async _disableInterception(): Promise<void> {
+    if (this._unsubscribeRequest) {
+      this._unsubscribeRequest();
+      this._unsubscribeRequest = null;
+    }
+    await this.adapter.disableRequestInterception?.(this.contextId);
+  }
+
+  private _handleInterceptedRequest(req: { requestId: string; url: string }): void {
+    const match = this._findMatchingRoute(req.url);
+    if (!match) {
+      // No handler — continue the request
+      void this.adapter.continueRequest?.(this.contextId, req.requestId);
+      return;
+    }
+
+    const route = new Route(
+      req.requestId,
+      (opts: FulfillOptions) =>
+        this.adapter.fulfillRequest
+          ? this.adapter.fulfillRequest(this.contextId, req.requestId, opts)
+          : Promise.resolve(),
+      () =>
+        this.adapter.continueRequest
+          ? this.adapter.continueRequest(this.contextId, req.requestId)
+          : Promise.resolve(),
+      () =>
+        this.adapter.abortRequest
+          ? this.adapter.abortRequest(this.contextId, req.requestId)
+          : Promise.resolve(),
+    );
+
+    // AC-8: Wrap in Promise so async handler rejections don't become unhandled
+    // Promise rejections. After the handler resolves/rejects, fall back to
+    // continue() if the handler never called fulfill/continue/abort.
+    Promise.resolve(match(route)).catch(() => {
+      // handler threw — fall through to the fallback below
+    }).finally(() => {
+      if (!route._handled) {
+        void this.adapter.continueRequest?.(this.contextId, req.requestId);
+      }
+    });
+  }
+
+  /**
+   * Find the first handler whose pattern matches `url`.
+   * Patterns are checked in insertion order.
+   */
+  private _findMatchingRoute(url: string): ((route: Route) => void) | undefined {
+    for (const [key, handler] of this._routes) {
+      const pattern = this._routePatterns.get(key)!;
+      if (matchesPattern(pattern, url)) {
+        return handler;
+      }
+    }
+    return undefined;
+  }
+
+  /**
    * Close the underlying browser context.
    *
    * AC-11: Cancels in-flight polling first so that waitForSelector loops do
@@ -239,6 +375,21 @@ export class Page {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * AC-1: Match a URL against a string (exact or glob with **) or RegExp pattern.
+ */
+function matchesPattern(pattern: string | RegExp, url: string): boolean {
+  if (pattern instanceof RegExp) {
+    return pattern.test(url);
+  }
+  // Glob: convert ** to a regex wildcard, escape other special chars
+  const escaped = pattern
+    .replace(/[.+^${}()|[\]\\]/g, "\\$&") // escape regex special chars (except *)
+    .replace(/\*\*/g, ".*")               // ** → .*
+    .replace(/(?<!\.)(?<!\*)\*/g, "[^/]*"); // single * → [^/]*
+  return new RegExp(`^${escaped}$`).test(url);
 }
 
 /**

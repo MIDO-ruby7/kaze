@@ -19,11 +19,13 @@ export { test, beforeAll, afterAll, beforeEach, afterEach } from "./api/test.js"
 export { expect } from "./api/expect.js";
 export { Page, createPage } from "./api/Page.js";
 export { Locator } from "./api/Locator.js";
+export { Route } from "./api/Route.js";
 export { collectTestCases } from "./api/test.js";
 
 // Re-export types for consumers
 export type { GotoOptions, WaitForSelectorOptions } from "./api/Page.js";
 export type { LocatorMatchers, PageMatchers } from "./api/expect.js";
+export type { FulfillOptions } from "./api/Route.js";
 
 // ---------------------------------------------------------------------------
 // Config API (AC-5)
