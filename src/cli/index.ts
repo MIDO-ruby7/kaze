@@ -31,6 +31,7 @@ const { values, positionals } = parseArgs({
     timeout: { type: "string" },
     reporter: { type: "string" },
     watch: { type: "boolean", short: "w", default: false },
+    screenshot: { type: "string" },
     help: { type: "boolean", short: "h", default: false },
   },
   allowPositionals: true,
@@ -46,11 +47,12 @@ Usage:
   kaze test [pattern...] [options]   # "test" subcommand (backward compat)
 
 Options:
-  --workers=N       Max parallel workers (or KAZE_WORKERS env var)
-  --timeout=N       Per-test timeout in ms (default: 30000)
-  --reporter=MODE   Output mode: verbose (default) | dot
-  --watch, -w       Watch for file changes and re-run tests
-  -h, --help        Show this help
+  --workers=N         Max parallel workers (or KAZE_WORKERS env var)
+  --timeout=N         Per-test timeout in ms (default: 30000)
+  --reporter=MODE     Output mode: verbose (default) | dot
+  --screenshot=off    Disable auto-screenshot on failure/timeout
+  --watch, -w         Watch for file changes and re-run tests
+  -h, --help          Show this help
 
 Examples:
   kaze
@@ -87,6 +89,8 @@ const timeout =
 const reporterMode: ReporterMode =
   values.reporter === "dot" ? "dot" : "verbose";
 const watchMode = values.watch === true;
+// AC-4: --screenshot=off disables screenshot capture
+const screenshotEnabled = values.screenshot !== "off";
 
 // ---------------------------------------------------------------------------
 // Run
@@ -111,6 +115,7 @@ const watchMode = values.watch === true;
       patterns: patterns.length > 0 ? patterns : undefined,
       workers: runWorkers,
       timeout: runTimeout,
+      screenshot: screenshotEnabled,
     });
 
     const summary = report(results, reporterMode);

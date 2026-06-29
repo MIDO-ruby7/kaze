@@ -63,6 +63,13 @@ export interface ProtocolAdapter {
   resetContext?(contextId: ContextId): Promise<void>;
 
   /**
+   * Capture a PNG screenshot of the given context.
+   * Returns the raw PNG bytes as a Buffer.
+   * Optional — implementations that don't support this can omit it.
+   */
+  screenshot?(contextId: ContextId): Promise<Buffer>;
+
+  /**
    * Close the browser process and release all resources.
    */
   close(): Promise<void>;

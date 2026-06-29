@@ -20,4 +20,6 @@ export interface TestResult {
   status: "passed" | "failed" | "timedOut";
   durationMs: number;
   error?: string;
+  /** Path to the screenshot captured on failure/timeout. Only set when screenshot was taken. */
+  screenshotPath?: string;
 }
