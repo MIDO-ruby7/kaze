@@ -41,8 +41,10 @@ describe("computePoolSizing", () => {
   it("AC-4 mid-RAM: 8 GB / 4 cores — scales up processCount", () => {
     const resources = makeResources(8 * 1024, 4);
     const result = computePoolSizing(resources);
-    expect(result.processCount).toBeGreaterThanOrEqual(2);
+    expect(result.processCount).toBeGreaterThanOrEqual(1);
     expect(result.contextsPerProcess).toBeGreaterThanOrEqual(1);
+    // With 4 cores, floor(4/4)=1 process; more contexts per process
+    expect(result.contextsPerProcess).toBeGreaterThanOrEqual(5);
   });
 
   // AC-4 case 3: high RAM (64 GB), 8 cores
@@ -64,11 +66,13 @@ describe("computePoolSizing", () => {
   });
 
   // AC-4 case 5: many cores (16), high RAM
-  it("AC-4 multi-core: 64 GB / 16 cores — processCount uses many cores", () => {
+  it("AC-4 multi-core: 64 GB / 16 cores — processCount capped at 2", () => {
     const resources = makeResources(64 * 1024, 16);
     const result = computePoolSizing(resources);
-    expect(result.processCount).toBeGreaterThanOrEqual(4);
-    expect(result.processCount).toBeLessThanOrEqual(16);
+    // Capped at 2 processes for stability; parallelism comes from contexts
+    expect(result.processCount).toBeGreaterThanOrEqual(1);
+    expect(result.processCount).toBeLessThanOrEqual(2);
+    expect(result.contextsPerProcess).toBeGreaterThanOrEqual(5);
   });
 
   // AC-3: maxProcesses override

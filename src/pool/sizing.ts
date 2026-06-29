@@ -33,11 +33,12 @@ export interface PoolSizingOpts {
  * optional user overrides.
  *
  * Strategy:
- *   1. Use `freeMemMB` as the available budget (conservative: only free RAM).
- *   2. Determine maximum processCount that fits in memory, capped by cpuCount.
- *   3. Distribute remaining memory across contexts per process.
- *   4. Clamp everything to at least 1 (AC-5 minimum guarantee).
- *   5. Apply user-provided overrides as additional upper bounds.
+ *   1. Determine processCount from CPU cores (not RAM) — processes are I/O bound,
+ *      not CPU bound. Cap at 4 to avoid diminishing returns.
+ *   2. Fill the remaining RAM budget with as many contexts as possible across
+ *      all processes. This maximises total parallelism.
+ *   3. Clamp everything to at least 1 (AC-5 minimum guarantee).
+ *   4. Apply user-provided overrides as additional upper bounds.
  */
 export function computePoolSizing(
   resources: HostResources,
@@ -49,27 +50,25 @@ export function computePoolSizing(
   const MINIMUM_MEMORY_MB = DEFAULT_RAM_PER_PROCESS_MB + DEFAULT_RAM_PER_CONTEXT_MB;
   const insufficientMemory = freeMemMB < MINIMUM_MEMORY_MB;
 
-  // Step 1: How many processes can we fit in free RAM?
-  //   Each process needs at least DEFAULT_RAM_PER_PROCESS_MB (+ 1 context).
-  const ramPerProcessWithOneContext =
-    DEFAULT_RAM_PER_PROCESS_MB + DEFAULT_RAM_PER_CONTEXT_MB;
-  const processesByRam = Math.floor(freeMemMB / ramPerProcessWithOneContext);
+  // Step 1: processCount — driven by CPU, capped at 2.
+  //   Multiple browser processes increase parallelism but also OS overhead.
+  //   2 is the sweet spot for most developer machines.
+  const processCount = Math.max(1, Math.min(Math.floor(cpuCount / 4), 2));
 
-  // Step 2: Cap by CPU core count.
-  const uncappedProcessCount = Math.min(processesByRam, cpuCount);
-
-  // Step 3: Enforce minimum of 1.
-  const processCount = Math.max(1, uncappedProcessCount);
-
-  // Step 4: With processCount fixed, compute how many contexts fit per process.
-  //   remainingMemPerProcess = (freeMemMB / processCount) - DEFAULT_RAM_PER_PROCESS_MB
-  const remainingMemPerProcess = freeMemMB / processCount - DEFAULT_RAM_PER_PROCESS_MB;
-  const contextsByRam = Math.floor(
-    remainingMemPerProcess / DEFAULT_RAM_PER_CONTEXT_MB,
+  // Step 2: Total context budget from remaining RAM.
+  //   RAM used by processes: processCount × DEFAULT_RAM_PER_PROCESS_MB
+  //   Remaining RAM is shared equally across all contexts.
+  //   Cap at 10 contexts per process to avoid overwhelming a single browser.
+  const MAX_CONTEXTS_PER_PROCESS = 10;
+  const ramForProcesses = processCount * DEFAULT_RAM_PER_PROCESS_MB;
+  const ramForContexts = Math.max(0, freeMemMB - ramForProcesses);
+  const totalContexts = Math.max(1, Math.floor(ramForContexts / DEFAULT_RAM_PER_CONTEXT_MB));
+  const contextsPerProcess = Math.max(
+    1,
+    Math.min(MAX_CONTEXTS_PER_PROCESS, Math.ceil(totalContexts / processCount)),
   );
-  const contextsPerProcess = Math.max(1, contextsByRam);
 
-  // Step 5: Apply user overrides as upper bounds.
+  // Step 3: Apply user overrides as upper bounds.
   const finalProcessCount =
     opts?.maxProcesses !== undefined
       ? Math.min(processCount, opts.maxProcesses)
