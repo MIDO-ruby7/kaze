@@ -13,6 +13,7 @@ import type { PooledContext } from "../pool/types.js";
 import type { ProtocolAdapter } from "../protocol/index.js";
 
 import { Locator } from "./Locator.js";
+import { Route, type FulfillOptions } from "./Route.js";
 import { escapeSelector } from "./utils.js";
 
 /** Returns true when `err` is the "Element not found" error thrown by the adapter. */
@@ -55,6 +56,18 @@ export class Page {
    * stops immediately after the context is recycled.
    */
   _cancelled = false;
+
+  /**
+   * AC-1/AC-3: Registered route handlers keyed by their original pattern.
+   * Using Map to preserve insertion order.
+   */
+  private _routes = new Map<string | RegExp, (route: Route) => void>();
+
+  /**
+   * AC-1: Unsubscribe function returned by adapter.onRequest. Set once
+   * interception is enabled, cleared when disabled.
+   */
+  private _unsubscribeRequest: (() => void) | null = null;
 
   constructor(
     private readonly adapter: ProtocolAdapter,
@@ -218,6 +231,96 @@ export class Page {
   }
 
   /**
+   * AC-1: Intercept requests matching `pattern` with `handler`.
+   * Pattern can be a string (exact match or glob with **) or RegExp.
+   */
+  async route(pattern: string | RegExp, handler: (route: Route) => void): Promise<void> {
+    const wasEmpty = this._routes.size === 0;
+    this._routes.set(pattern, handler);
+
+    if (wasEmpty) {
+      // Enable interception on first route registration
+      await this.adapter.enableRequestInterception?.(this.contextId);
+
+      // Register a single listener that dispatches to matching handlers
+      if (this.adapter.onRequest) {
+        this._unsubscribeRequest = this.adapter.onRequest(
+          this.contextId,
+          (req) => this._handleInterceptedRequest(req),
+        );
+      }
+    }
+  }
+
+  /**
+   * AC-3: Remove the interceptor for `pattern`.
+   * If no routes remain, disables interception.
+   */
+  async unroute(pattern: string | RegExp): Promise<void> {
+    this._routes.delete(pattern);
+
+    if (this._routes.size === 0) {
+      await this._disableInterception();
+    }
+  }
+
+  /**
+   * AC-4: Called by context reset logic to clear all routes and disable interception.
+   */
+  async resetRoutes(): Promise<void> {
+    this._routes.clear();
+    await this._disableInterception();
+  }
+
+  private async _disableInterception(): Promise<void> {
+    if (this._unsubscribeRequest) {
+      this._unsubscribeRequest();
+      this._unsubscribeRequest = null;
+    }
+    await this.adapter.disableRequestInterception?.(this.contextId);
+  }
+
+  private _handleInterceptedRequest(req: { requestId: string; url: string }): void {
+    const match = this._findMatchingRoute(req.url);
+    if (!match) {
+      // No handler — continue the request
+      void this.adapter.continueRequest?.(this.contextId, req.requestId);
+      return;
+    }
+
+    const route = new Route(
+      req.requestId,
+      (opts: FulfillOptions) =>
+        this.adapter.fulfillRequest
+          ? this.adapter.fulfillRequest(this.contextId, req.requestId, opts)
+          : Promise.resolve(),
+      () =>
+        this.adapter.continueRequest
+          ? this.adapter.continueRequest(this.contextId, req.requestId)
+          : Promise.resolve(),
+      () =>
+        this.adapter.abortRequest
+          ? this.adapter.abortRequest(this.contextId, req.requestId)
+          : Promise.resolve(),
+    );
+
+    match(route);
+  }
+
+  /**
+   * Find the first handler whose pattern matches `url`.
+   * Patterns are checked in insertion order.
+   */
+  private _findMatchingRoute(url: string): ((route: Route) => void) | undefined {
+    for (const [pattern, handler] of this._routes) {
+      if (matchesPattern(pattern, url)) {
+        return handler;
+      }
+    }
+    return undefined;
+  }
+
+  /**
    * Close the underlying browser context.
    *
    * AC-11: Cancels in-flight polling first so that waitForSelector loops do
@@ -239,6 +342,21 @@ export class Page {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * AC-1: Match a URL against a string (exact or glob with **) or RegExp pattern.
+ */
+function matchesPattern(pattern: string | RegExp, url: string): boolean {
+  if (pattern instanceof RegExp) {
+    return pattern.test(url);
+  }
+  // Glob: convert ** to a regex wildcard, escape other special chars
+  const escaped = pattern
+    .replace(/[.+^${}()|[\]\\]/g, "\\$&") // escape regex special chars (except *)
+    .replace(/\*\*/g, ".*")               // ** → .*
+    .replace(/(?<!\.)(?<!\*)\*/g, "[^/]*"); // single * → [^/]*
+  return new RegExp(`^${escaped}$`).test(url);
 }
 
 /**
