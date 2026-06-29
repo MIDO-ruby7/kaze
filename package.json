@@ -19,9 +19,9 @@
   "engines": {
     "node": ">=22"
   },
-  "bin": { "kaze": "./dist/cli/index.js" },
+  "bin": { "kaze": "./bin/kaze.js" },
   "scripts": {
-    "build": "tsup",
+    "build": "tsup && node -e \"const fs=require('fs');const f='dist/cli/index.js';const c=fs.readFileSync(f,'utf8');if(!c.startsWith('#!/'))fs.writeFileSync(f,'#!/usr/bin/env node\\n'+c);\"",
     "cli": "tsx src/cli/index.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

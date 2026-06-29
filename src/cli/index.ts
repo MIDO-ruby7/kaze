@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * index.ts — CLI entry point for `kaze`.
  *

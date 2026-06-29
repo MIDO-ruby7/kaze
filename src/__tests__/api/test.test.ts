@@ -2,15 +2,15 @@
  * Unit tests for test() registration API (AC-4).
  */
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach as vitestBeforeEach } from "vitest";
 
 import { Page } from "../../api/Page.js";
 import {
   test,
-  beforeAll,
-  afterAll,
-  beforeEach,
-  afterEach,
+  beforeAll as kazeBeforeAll,
+  afterAll as kazeAfterAll,
+  beforeEach as kazeBeforeEach,
+  afterEach as kazeAfterEach,
   collectTestCases,
   _resetRegistry,
 } from "../../api/test.js";
@@ -37,7 +37,7 @@ function makePool(adapter?: ProtocolAdapter): { getAdapter: (id: string) => Prot
 }
 
 describe("test()", () => {
-  beforeEach(() => {
+  vitestBeforeEach(() => {
     _resetRegistry();
   });
 
@@ -137,7 +137,7 @@ describe("lifecycle hooks", () => {
 
   it("beforeEach runs before each test", async () => {
     const order: string[] = [];
-    beforeEach(() => { order.push("beforeEach"); });
+    kazeBeforeEach(() => { order.push("beforeEach"); });
     test("t1", async () => { order.push("t1"); });
     test("t2", async () => { order.push("t2"); });
 
@@ -149,7 +149,7 @@ describe("lifecycle hooks", () => {
 
   it("afterEach runs after each test", async () => {
     const order: string[] = [];
-    afterEach(() => { order.push("afterEach"); });
+    kazeAfterEach(() => { order.push("afterEach"); });
     test("t1", async () => { order.push("t1"); });
     test("t2", async () => { order.push("t2"); });
 
@@ -161,7 +161,7 @@ describe("lifecycle hooks", () => {
 
   it("beforeAll runs once before all tests in scope", async () => {
     const order: string[] = [];
-    beforeAll(() => { order.push("beforeAll"); });
+    kazeBeforeAll(() => { order.push("beforeAll"); });
     test("t1", async () => { order.push("t1"); });
     test("t2", async () => { order.push("t2"); });
 
@@ -173,7 +173,7 @@ describe("lifecycle hooks", () => {
 
   it("afterAll runs once after all tests in scope", async () => {
     const order: string[] = [];
-    afterAll(() => { order.push("afterAll"); });
+    kazeAfterAll(() => { order.push("afterAll"); });
     test("t1", async () => { order.push("t1"); });
     test("t2", async () => { order.push("t2"); });
 
@@ -186,7 +186,7 @@ describe("lifecycle hooks", () => {
   it("hooks in describe scope only apply to tests in that scope", async () => {
     const order: string[] = [];
     test.describe("Suite", () => {
-      beforeEach(() => { order.push("suite:beforeEach"); });
+      kazeBeforeEach(() => { order.push("suite:beforeEach"); });
       test("inner", async () => { order.push("inner"); });
     });
     test("outer", async () => { order.push("outer"); });
@@ -200,9 +200,9 @@ describe("lifecycle hooks", () => {
 
   it("outer beforeEach runs for inner describe tests too", async () => {
     const order: string[] = [];
-    beforeEach(() => { order.push("outer:beforeEach"); });
+    kazeBeforeEach(() => { order.push("outer:beforeEach"); });
     test.describe("Suite", () => {
-      beforeEach(() => { order.push("inner:beforeEach"); });
+      kazeBeforeEach(() => { order.push("inner:beforeEach"); });
       test("t", async () => { order.push("t"); });
     });
 
@@ -215,7 +215,7 @@ describe("lifecycle hooks", () => {
 
   it("afterEach runs even when test throws", async () => {
     const order: string[] = [];
-    afterEach(() => { order.push("afterEach"); });
+    kazeAfterEach(() => { order.push("afterEach"); });
     test("throws", async () => { throw new Error("fail"); });
 
     const cases = collectTestCases(makePool());
