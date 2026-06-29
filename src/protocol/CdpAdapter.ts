@@ -172,6 +172,15 @@ class CdpSession {
       timer: ReturnType<typeof setTimeout>;
     }
   >();
+  /**
+   * Central event dispatcher for multiplexed sessions.
+   * Key = "<sessionId>\x00<method>", value = ordered list of one-shot resolvers.
+   * This avoids adding a WebSocket event listener per waitForEvent call (O(n) scanning).
+   */
+  private eventListeners = new Map<
+    string,
+    Array<(params: Record<string, unknown>) => void>
+  >();
   /** GAP-2: track whether this session has been closed */
   private closed = false;
 
@@ -206,8 +215,9 @@ class CdpSession {
       return;
     }
 
-    // Multiplexed session response (has sessionId)
     const sessionId = (msg as Record<string, unknown>).sessionId as string | undefined;
+
+    // Multiplexed session response (has sessionId + id)
     if (msg.id !== undefined && sessionId) {
       const key = `${msg.id}:${sessionId}`;
       const entry = this.pendingMux.get(key);
@@ -219,6 +229,18 @@ class CdpSession {
         } else {
           entry.resolve(msg.result ?? {});
         }
+      }
+      return;
+    }
+
+    // Multiplexed event (has sessionId, no id) — route via central dispatcher
+    if (msg.method && sessionId) {
+      const key = `${sessionId}\x00${msg.method}`;
+      const listeners = this.eventListeners.get(key);
+      if (listeners && listeners.length > 0) {
+        const cb = listeners.shift()!;
+        if (listeners.length === 0) this.eventListeners.delete(key);
+        cb(msg.params ?? {});
       }
       return;
     }
@@ -250,6 +272,7 @@ class CdpSession {
       entry.reject(error);
     }
     this.pendingMux.clear();
+    this.eventListeners.clear();
   }
 
   /**
@@ -290,28 +313,32 @@ class CdpSession {
     sessionId: string,
     timeoutMs: number = SEND_TIMEOUT_MS,
   ): Promise<Record<string, unknown>> {
+    // Use the central event dispatcher (O(1) lookup) instead of adding a
+    // WebSocket listener per call (which caused O(n) scanning with n concurrent sessions).
     return new Promise((resolve, reject) => {
+      const key = `${sessionId}\x00${method}`;
       const timer = setTimeout(() => {
-        this.ws.removeEventListener("message", handler);
+        // Remove from queue on timeout
+        const listeners = this.eventListeners.get(key);
+        if (listeners) {
+          const idx = listeners.indexOf(cb);
+          if (idx !== -1) listeners.splice(idx, 1);
+          if (listeners.length === 0) this.eventListeners.delete(key);
+        }
         reject(new Error(`Timeout waiting for CDP event "${method}" in session ${sessionId} after ${timeoutMs}ms`));
       }, timeoutMs);
 
-      const handler = (ev: MessageEvent): void => {
-        let msg: CdpResponse;
-        try {
-          msg = JSON.parse(ev.data as string) as CdpResponse;
-        } catch {
-          return;
-        }
-        const sid = (msg as Record<string, unknown>).sessionId as string | undefined;
-        if (msg.method === method && sid === sessionId) {
-          clearTimeout(timer);
-          this.ws.removeEventListener("message", handler);
-          resolve(msg.params ?? {});
-        }
+      const cb = (params: Record<string, unknown>): void => {
+        clearTimeout(timer);
+        resolve(params);
       };
 
-      this.ws.addEventListener("message", handler);
+      const existing = this.eventListeners.get(key);
+      if (existing) {
+        existing.push(cb);
+      } else {
+        this.eventListeners.set(key, [cb]);
+      }
     });
   }
 
@@ -468,7 +495,7 @@ export class CdpAdapter implements ProtocolAdapter {
   private browserSession: CdpSession | null = null;
   /** Map from our opaque ContextId → CDP targetId */
   private contextMap = new Map<ContextId, string>();
-  /** Map from our opaque ContextId → CdpPageSession (multiplexed, no extra WS) */
+  /** Map from our opaque ContextId → CdpPageSession (multiplexed via browser WS) */
   private targetSessions = new Map<ContextId, CdpPageSession>();
   private nextContextSeq = 1;
   /** GAP-3: track the temporary profile directory so close() can delete it */
@@ -544,10 +571,9 @@ export class CdpAdapter implements ProtocolAdapter {
       { url: "about:blank" },
     );
 
-    // Attach to the target using CDP session multiplexing.
-    // This avoids opening a separate WebSocket per page (which takes ~500ms).
-    // Instead, all page commands flow through the browser's existing WebSocket
-    // with a sessionId prefix.
+    // Attach to the target using CDP session multiplexing (flatten=true).
+    // All page commands flow through the browser's existing WebSocket with sessionId,
+    // avoiding per-page WebSocket connections which add ~540ms overhead at creation.
     const { sessionId } = await this.browserSession.send<{ sessionId: string }>(
       "Target.attachToTarget",
       { targetId, flatten: true },
