@@ -56,6 +56,8 @@ export default defineConfig({
 | `reporter` | `"verbose" \| "dot"` | `"verbose"` | 出力フォーマット |
 | `testMatch` | `string[]` | 自動検出 | 実行対象のグロブパターン |
 | `screenshot` | `boolean` | `true` | 失敗・タイムアウト時のスクリーンショット |
+| `grep` | `string` | — | テスト名の正規表現フィルタ |
+| `grepInvert` | `string` | — | テスト名の除外フィルタ |
 
 CLI フラグは常に設定ファイルより優先されます。例: 設定に `screenshot: false` があっても `kaze --screenshot=on` で有効化できます。
 
