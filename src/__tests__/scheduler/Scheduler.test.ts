@@ -7,10 +7,12 @@
  * AC-6: Context isolation — a test's context is not leaked to the next test
  */
 
+import * as fsSync from "node:fs";
 import * as fs from "node:fs/promises";
+import * as os from "node:os";
 import * as path from "node:path";
 
-import { describe, it, expect, vi, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 
 import type { BrowserPool } from "../../pool/BrowserPool.js";
 import type { PooledContext } from "../../pool/types.js";
@@ -60,41 +62,45 @@ function makeMockPool(poolSize: number): { pool: BrowserPool; concurrencyLog: nu
 }
 
 // ---------------------------------------------------------------------------
-// last-run.json helpers
-// ---------------------------------------------------------------------------
-
-const LAST_RUN_DIR = path.join(process.cwd(), ".kaze");
-const LAST_RUN_PATH = path.join(LAST_RUN_DIR, "last-run.json");
-
-async function writeLastRun(failedIds: string[]): Promise<void> {
-  await fs.mkdir(LAST_RUN_DIR, { recursive: true });
-  await fs.writeFile(LAST_RUN_PATH, JSON.stringify({ failedIds }), "utf-8");
-}
-
-async function readLastRun(): Promise<{ failedIds: string[] } | null> {
-  try {
-    const raw = await fs.readFile(LAST_RUN_PATH, "utf-8");
-    return JSON.parse(raw) as { failedIds: string[] };
-  } catch {
-    return null;
-  }
-}
-
-async function removeLastRun(): Promise<void> {
-  try {
-    await fs.unlink(LAST_RUN_PATH);
-  } catch {
-    // ignore
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
 describe("Scheduler", () => {
+  let tmpDir: string;
+  let lastRunPath: string;
+
+  function makeLastRunHelpers() {
+    async function writeLastRun(failedIds: string[]): Promise<void> {
+      await fs.mkdir(path.dirname(lastRunPath), { recursive: true });
+      await fs.writeFile(lastRunPath, JSON.stringify({ failedIds }), "utf-8");
+    }
+
+    async function readLastRun(): Promise<{ failedIds: string[] } | null> {
+      try {
+        const raw = await fs.readFile(lastRunPath, "utf-8");
+        return JSON.parse(raw) as { failedIds: string[] };
+      } catch {
+        return null;
+      }
+    }
+
+    async function removeLastRun(): Promise<void> {
+      try {
+        await fs.unlink(lastRunPath);
+      } catch {
+        // ignore
+      }
+    }
+
+    return { writeLastRun, readLastRun, removeLastRun };
+  }
+
+  beforeEach(() => {
+    tmpDir = fsSync.mkdtempSync(path.join(os.tmpdir(), "kaze-scheduler-test-"));
+    lastRunPath = path.join(tmpDir, "last-run.json");
+  });
   afterEach(async () => {
-    await removeLastRun();
+    await fs.rm(tmpDir, { recursive: true, force: true });
   });
 
   // -------------------------------------------------------------------------
@@ -104,7 +110,7 @@ describe("Scheduler", () => {
     it("never exceeds pool capacity when running more tests than slots", async () => {
       const POOL_SIZE = 2;
       const { pool, concurrencyLog } = makeMockPool(POOL_SIZE);
-      const scheduler = new Scheduler(pool);
+      const scheduler = new Scheduler(pool, { lastRunPath });
 
       const tests: TestCase[] = Array.from({ length: 5 }, (_, i) => ({
         id: `t${i}`,
@@ -123,7 +129,7 @@ describe("Scheduler", () => {
 
     it("runs all tests to completion", async () => {
       const { pool } = makeMockPool(3);
-      const scheduler = new Scheduler(pool);
+      const scheduler = new Scheduler(pool, { lastRunPath });
 
       const tests: TestCase[] = Array.from({ length: 4 }, (_, i) => ({
         id: `t${i}`,
@@ -144,10 +150,11 @@ describe("Scheduler", () => {
   // -------------------------------------------------------------------------
   describe("AC-5(b): failed tests are prioritized", () => {
     it("puts previously failed tests at the front of the queue", async () => {
+      const { writeLastRun } = makeLastRunHelpers();
       await writeLastRun(["t2", "t4"]);
 
       const { pool } = makeMockPool(1); // single slot forces strict ordering
-      const scheduler = new Scheduler(pool);
+      const scheduler = new Scheduler(pool, { lastRunPath });
 
       const executionOrder: string[] = [];
       const tests: TestCase[] = ["t0", "t1", "t2", "t3", "t4"].map((id) => ({
@@ -167,10 +174,11 @@ describe("Scheduler", () => {
     });
 
     it("works fine when last-run.json does not exist", async () => {
+      const { removeLastRun } = makeLastRunHelpers();
       await removeLastRun();
 
       const { pool } = makeMockPool(2);
-      const scheduler = new Scheduler(pool);
+      const scheduler = new Scheduler(pool, { lastRunPath });
 
       const tests: TestCase[] = ["a", "b", "c"].map((id) => ({
         id,
@@ -191,7 +199,7 @@ describe("Scheduler", () => {
   describe("AC-5(c): one failure does not halt execution", () => {
     it("continues running tests after one throws", async () => {
       const { pool } = makeMockPool(2);
-      const scheduler = new Scheduler(pool);
+      const scheduler = new Scheduler(pool, { lastRunPath });
 
       let otherTestRan = false;
 
@@ -222,7 +230,7 @@ describe("Scheduler", () => {
 
     it("records error message for failed tests", async () => {
       const { pool } = makeMockPool(1);
-      const scheduler = new Scheduler(pool);
+      const scheduler = new Scheduler(pool, { lastRunPath });
 
       scheduler.enqueue([
         {
@@ -241,7 +249,7 @@ describe("Scheduler", () => {
 
     it("records timedOut status when test exceeds timeout", async () => {
       const { pool } = makeMockPool(1);
-      const scheduler = new Scheduler(pool);
+      const scheduler = new Scheduler(pool, { lastRunPath });
 
       scheduler.enqueue([
         {
@@ -264,8 +272,9 @@ describe("Scheduler", () => {
   // -------------------------------------------------------------------------
   describe("AC-3: last-run.json persistence", () => {
     it("writes results to .kaze/last-run.json after run", async () => {
+      const { readLastRun } = makeLastRunHelpers();
       const { pool } = makeMockPool(2);
-      const scheduler = new Scheduler(pool);
+      const scheduler = new Scheduler(pool, { lastRunPath });
 
       scheduler.enqueue([
         { id: "p1", name: "Pass 1", fn: async () => {} },
@@ -286,8 +295,9 @@ describe("Scheduler", () => {
     });
 
     it("writes empty failedIds when all tests pass", async () => {
+      const { readLastRun } = makeLastRunHelpers();
       const { pool } = makeMockPool(2);
-      const scheduler = new Scheduler(pool);
+      const scheduler = new Scheduler(pool, { lastRunPath });
 
       scheduler.enqueue([
         { id: "a", name: "A", fn: async () => {} },
@@ -306,7 +316,7 @@ describe("Scheduler", () => {
   describe("AC-6: context isolation", () => {
     it("acquire and release are called once per test", async () => {
       const { pool } = makeMockPool(2);
-      const scheduler = new Scheduler(pool);
+      const scheduler = new Scheduler(pool, { lastRunPath });
 
       const tests: TestCase[] = Array.from({ length: 4 }, (_, i) => ({
         id: `iso-${i}`,
@@ -323,7 +333,7 @@ describe("Scheduler", () => {
 
     it("release is called even when the test throws", async () => {
       const { pool } = makeMockPool(1);
-      const scheduler = new Scheduler(pool);
+      const scheduler = new Scheduler(pool, { lastRunPath });
 
       scheduler.enqueue([
         {
@@ -341,7 +351,7 @@ describe("Scheduler", () => {
 
     it("release is called even when the test times out", async () => {
       const { pool } = makeMockPool(1);
-      const scheduler = new Scheduler(pool);
+      const scheduler = new Scheduler(pool, { lastRunPath });
 
       scheduler.enqueue([
         {
@@ -365,7 +375,7 @@ describe("Scheduler", () => {
   describe("result metadata", () => {
     it("records durationMs for each test", async () => {
       const { pool } = makeMockPool(1);
-      const scheduler = new Scheduler(pool);
+      const scheduler = new Scheduler(pool, { lastRunPath });
 
       scheduler.enqueue([{ id: "t", name: "T", fn: async () => {} }]);
       const [result] = await scheduler.run();
@@ -381,7 +391,7 @@ describe("Scheduler", () => {
   describe("B-1: queue cleared after run()", () => {
     it("does not re-run tests from a previous run when enqueue→run→enqueue→run", async () => {
       const { pool } = makeMockPool(2);
-      const scheduler = new Scheduler(pool);
+      const scheduler = new Scheduler(pool, { lastRunPath });
 
       const firstRunIds: string[] = [];
       const secondRunIds: string[] = [];
@@ -409,7 +419,7 @@ describe("Scheduler", () => {
 
     it("second run only contains tests enqueued after first run", async () => {
       const { pool } = makeMockPool(2);
-      const scheduler = new Scheduler(pool);
+      const scheduler = new Scheduler(pool, { lastRunPath });
 
       const executed: string[] = [];
 
@@ -436,7 +446,7 @@ describe("Scheduler", () => {
   describe("GAP-1: run() rejects while already running", () => {
     it("rejects the second run() call if the first has not finished", async () => {
       const { pool } = makeMockPool(1);
-      const scheduler = new Scheduler(pool);
+      const scheduler = new Scheduler(pool, { lastRunPath });
 
       // Enqueue a test that takes a bit
       scheduler.enqueue([
@@ -473,7 +483,7 @@ describe("Scheduler", () => {
         stats: vi.fn().mockReturnValue({ totalContexts: 0, busy: 0, idle: 0, processes: 0, crashes: 0 }),
       } as unknown as BrowserPool;
 
-      const scheduler = new Scheduler(failPool);
+      const scheduler = new Scheduler(failPool, { lastRunPath });
       scheduler.enqueue([
         { id: "t1", name: "T1", fn: async () => {} },
         { id: "t2", name: "T2", fn: async () => {} },
@@ -494,7 +504,7 @@ describe("Scheduler", () => {
   describe("AC-11: page cancellation on Scheduler timeout", () => {
     it("calls ctx._cancel() when the test times out", async () => {
       const { pool } = makeMockPool(1);
-      const scheduler = new Scheduler(pool);
+      const scheduler = new Scheduler(pool, { lastRunPath });
 
       let cancelCalled = false;
 
@@ -523,26 +533,16 @@ describe("Scheduler", () => {
   // -------------------------------------------------------------------------
   describe("GAP-3: last-run.json write failure does not throw", () => {
     it("returns results normally even when the filesystem write fails", async () => {
+      // Use a sub-path where the parent directory is replaced by a file,
+      // causing mkdir to fail with ENOTDIR — all within tmpDir so no global state is touched.
+      const blockerDir = path.join(tmpDir, "blocker-dir");
+      const blockedLastRunPath = path.join(blockerDir, "sub", "last-run.json");
+
+      // Create blockerDir as a regular FILE so that mkdir(<blockerDir>/sub) fails with ENOTDIR
+      await fs.writeFile(blockerDir, "blocker");
+
       const { pool } = makeMockPool(1);
-      const scheduler = new Scheduler(pool);
-
-      // Place a regular file at the .kaze path so that mkdir(..., {recursive: true})
-      // succeeds but writeFile fails because the target directory path conflicts.
-      // Easier: put a regular FILE at the .kaze directory path so mkdir throws.
-      // But recursive mkdir ignores EEXIST. Instead we write a file *at* the
-      // last-run.json path's parent but as a non-directory entry.
-      //
-      // The most reliable approach: temporarily create .kaze as a file so that
-      // fs.mkdir(".kaze", { recursive: true }) throws ENOTDIR.
-      const kazeDir = LAST_RUN_DIR;
-
-      // Remove any existing .kaze dir/file first
-      try {
-        await fs.rm(kazeDir, { recursive: true, force: true });
-      } catch { /* ignore */ }
-
-      // Create .kaze as a regular file — mkdir will fail with ENOTDIR
-      await fs.writeFile(kazeDir, "blocker");
+      const scheduler = new Scheduler(pool, { lastRunPath: blockedLastRunPath });
 
       scheduler.enqueue([
         { id: "ok", name: "OK", fn: async () => {} },
@@ -553,11 +553,6 @@ describe("Scheduler", () => {
 
       expect(results).toHaveLength(1);
       expect(results[0].status).toBe("passed");
-
-      // Restore: remove the blocker file
-      try {
-        await fs.rm(kazeDir, { force: true });
-      } catch { /* ignore */ }
     });
   });
 });

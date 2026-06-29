@@ -51,11 +51,17 @@ export function report(results: TestResult[], mode: ReporterMode): ReportSummary
         if (r.error) {
           console.log(`    └ ${r.error}`);
         }
+        if (r.screenshotPath) {
+          console.log(`    screenshot: ${r.screenshotPath}`);
+        }
       } else {
         failed++;
         console.log(`  ✗ ${r.name}`);
         if (r.error) {
           console.log(`    └ ${r.error}`);
+        }
+        if (r.screenshotPath) {
+          console.log(`    screenshot: ${r.screenshotPath}`);
         }
       }
     }

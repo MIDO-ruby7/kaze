@@ -661,6 +661,12 @@ export class CdpAdapter implements ProtocolAdapter {
     return result.result.value;
   }
 
+  async screenshot(contextId: ContextId): Promise<Buffer> {
+    const session = this.getSession(contextId);
+    const result = await session.send<{ data: string }>("Page.captureScreenshot", { format: "png" });
+    return Buffer.from(result.data, "base64");
+  }
+
   async dispatchEvent(contextId: ContextId, selector: string, event: string): Promise<void> {
     const escaped = selector.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
     const escapedEvent = event.replace(/\\/g, "\\\\").replace(/'/g, "\\'");

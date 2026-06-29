@@ -21,8 +21,6 @@ import type { TestCase, TestResult } from "./types.js";
 // ---------------------------------------------------------------------------
 
 const DEFAULT_TIMEOUT_MS = 30_000;
-const LAST_RUN_DIR = path.join(process.cwd(), ".kaze");
-const LAST_RUN_PATH = path.join(LAST_RUN_DIR, "last-run.json");
 
 // ---------------------------------------------------------------------------
 // Internal types
@@ -36,12 +34,41 @@ interface LastRunData {
 // Scheduler
 // ---------------------------------------------------------------------------
 
+export interface SchedulerOptions {
+  /** Whether to capture screenshots on failure/timeout. Defaults to true. */
+  screenshot?: boolean;
+  /** Override the path to last-run.json (useful for test isolation). */
+  lastRunPath?: string;
+  /** Override the directory where screenshots are saved (useful for test isolation). */
+  screenshotDir?: string;
+}
+
 export class Scheduler {
   private queue: TestCase[] = [];
   /** True while run() is executing — prevents concurrent run() calls. */
   private _running = false;
+  private readonly screenshotEnabled: boolean;
+  private readonly options: SchedulerOptions;
 
-  constructor(private readonly pool: BrowserPool) {}
+  constructor(
+    private readonly pool: BrowserPool,
+    options: SchedulerOptions = {},
+  ) {
+    this.options = options;
+    this.screenshotEnabled = options.screenshot !== false;
+  }
+
+  private get _lastRunPath(): string {
+    return this.options.lastRunPath ?? path.join(process.cwd(), ".kaze", "last-run.json");
+  }
+
+  private get _lastRunDir(): string {
+    return path.dirname(this._lastRunPath);
+  }
+
+  private get _screenshotsDir(): string {
+    return this.options.screenshotDir ?? path.join(process.cwd(), ".kaze", "screenshots");
+  }
 
   // -------------------------------------------------------------------------
   // AC-1: enqueue
@@ -147,16 +174,67 @@ export class Scheduler {
       };
     } catch (err: unknown) {
       const isTimeout = err instanceof TimeoutError;
+
+      // AC-1/AC-5/AC-6: best-effort screenshot on failure or timeout
+      let screenshotPath: string | undefined;
+      if (this.screenshotEnabled) {
+        screenshotPath = await this._captureScreenshot(test.name, test.id, ctx.adapterId, ctx.contextId);
+      }
+
       return {
         id: test.id,
         name: test.name,
         status: isTimeout ? "timedOut" : "failed",
         durationMs: Date.now() - start,
         error: err instanceof Error ? err.message : String(err),
+        screenshotPath,
       };
     } finally {
       // AC-2 & AC-6: always release so the context goes back to the pool
       this.pool.release(ctx);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // Private: AC-1 screenshot capture
+  // -------------------------------------------------------------------------
+
+  /**
+   * Capture a PNG screenshot and save it to .kaze/screenshots/<sanitized-name>-<testId>-<timestamp>.png.
+   * Returns the saved path, or undefined if capture fails (best-effort, AC-5).
+   */
+  private async _captureScreenshot(
+    testName: string,
+    testId: string,
+    adapterId: string,
+    contextId: string,
+  ): Promise<string | undefined> {
+    try {
+      const adapter = this.pool.getAdapter(adapterId);
+      if (!adapter.screenshot) return undefined;
+
+      const pngBuffer = await adapter.screenshot(contextId);
+
+      // AC-2: sanitize test name (replace characters not safe for filenames with '-')
+      // AC-9/AC-10: enforce uniqueness with testId and cap length to avoid ENAMETOOLONG
+      let safeName = testName
+        .replace(/[^a-zA-Z0-9_\-.]/g, "-")
+        .slice(0, 200);
+      if (!safeName || safeName.replace(/-/g, "").length === 0) {
+        safeName = "unnamed";
+      }
+      const timestamp = Date.now();
+      const filename = `${safeName}-${testId}-${timestamp}.png`;
+      const screenshotsDir = this._screenshotsDir;
+
+      await fs.mkdir(screenshotsDir, { recursive: true });
+      const filePath = path.join(screenshotsDir, filename);
+      await fs.writeFile(filePath, pngBuffer);
+
+      return filePath;
+    } catch {
+      // AC-5: screenshot failure must not affect test result
+      return undefined;
     }
   }
 
@@ -184,7 +262,7 @@ export class Scheduler {
 
   private async _readLastRunFailedIds(): Promise<Set<string>> {
     try {
-      const raw = await fs.readFile(LAST_RUN_PATH, "utf-8");
+      const raw = await fs.readFile(this._lastRunPath, "utf-8");
       const data = JSON.parse(raw) as LastRunData;
       return new Set(data.failedIds ?? []);
     } catch {
@@ -202,8 +280,8 @@ export class Scheduler {
 
       const data: LastRunData = { failedIds };
 
-      await fs.mkdir(LAST_RUN_DIR, { recursive: true });
-      await fs.writeFile(LAST_RUN_PATH, JSON.stringify(data, null, 2), "utf-8");
+      await fs.mkdir(this._lastRunDir, { recursive: true });
+      await fs.writeFile(this._lastRunPath, JSON.stringify(data, null, 2), "utf-8");
     } catch (err: unknown) {
       console.warn(
         "[Scheduler] Failed to write last-run.json:",

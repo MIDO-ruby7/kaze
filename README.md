@@ -34,6 +34,12 @@ pnpm install
 pnpm install && pnpm test
 ```
 
+## スクリーンショット
+
+テストが失敗・タイムアウトすると自動で `.kaze/screenshots/` に保存されます。
+`kaze --screenshot=off` で無効化できます。
+`.kaze/` は `.gitignore` に含まれています。
+
 ## License
 
 MIT
