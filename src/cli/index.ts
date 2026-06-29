@@ -107,6 +107,7 @@ const screenshotEnabled = values.screenshot !== "off";
         workers: runWorkers,
         timeout: runTimeout,
         reporterMode,
+        screenshot: screenshotEnabled,
       });
       return;
     }

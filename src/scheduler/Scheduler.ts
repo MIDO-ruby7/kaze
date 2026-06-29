@@ -21,7 +21,6 @@ import type { TestCase, TestResult } from "./types.js";
 // ---------------------------------------------------------------------------
 
 const DEFAULT_TIMEOUT_MS = 30_000;
-const SCREENSHOTS_DIR = path.join(process.cwd(), ".kaze", "screenshots");
 
 // ---------------------------------------------------------------------------
 // Internal types
@@ -40,6 +39,8 @@ export interface SchedulerOptions {
   screenshot?: boolean;
   /** Override the path to last-run.json (useful for test isolation). */
   lastRunPath?: string;
+  /** Override the directory where screenshots are saved (useful for test isolation). */
+  screenshotDir?: string;
 }
 
 export class Scheduler {
@@ -63,6 +64,10 @@ export class Scheduler {
 
   private get _lastRunDir(): string {
     return path.dirname(this._lastRunPath);
+  }
+
+  private get _screenshotsDir(): string {
+    return this.options.screenshotDir ?? path.join(process.cwd(), ".kaze", "screenshots");
   }
 
   // -------------------------------------------------------------------------
@@ -220,7 +225,7 @@ export class Scheduler {
       }
       const timestamp = Date.now();
       const filename = `${safeName}-${testId}-${timestamp}.png`;
-      const screenshotsDir = SCREENSHOTS_DIR;
+      const screenshotsDir = this._screenshotsDir;
 
       await fs.mkdir(screenshotsDir, { recursive: true });
       const filePath = path.join(screenshotsDir, filename);

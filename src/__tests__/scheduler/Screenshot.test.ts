@@ -91,7 +91,7 @@ describe("Screenshot capture", () => {
     it("captures screenshot when test fails", async () => {
       const pngData = Buffer.from([0x89, 0x50, 0x4e, 0x47]); // PNG header bytes
       const { pool, adapter } = makeMockPoolWithScreenshot(() => Promise.resolve(pngData));
-      const scheduler = new Scheduler(pool, { screenshot: true, lastRunPath: path.join(tmpDir, "last-run.json") });
+      const scheduler = new Scheduler(pool, { screenshot: true, lastRunPath: path.join(tmpDir, "last-run.json"), screenshotDir: path.join(tmpDir, "screenshots") });
 
       scheduler.enqueue([
         {
@@ -111,7 +111,7 @@ describe("Screenshot capture", () => {
     it("captures screenshot when test times out", async () => {
       const pngData = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
       const { pool, adapter } = makeMockPoolWithScreenshot(() => Promise.resolve(pngData));
-      const scheduler = new Scheduler(pool, { screenshot: true, lastRunPath: path.join(tmpDir, "last-run.json") });
+      const scheduler = new Scheduler(pool, { screenshot: true, lastRunPath: path.join(tmpDir, "last-run.json"), screenshotDir: path.join(tmpDir, "screenshots") });
 
       scheduler.enqueue([
         {
@@ -132,7 +132,7 @@ describe("Screenshot capture", () => {
     it("does NOT capture screenshot when test passes", async () => {
       const pngData = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
       const { pool, adapter } = makeMockPoolWithScreenshot(() => Promise.resolve(pngData));
-      const scheduler = new Scheduler(pool, { screenshot: true, lastRunPath: path.join(tmpDir, "last-run.json") });
+      const scheduler = new Scheduler(pool, { screenshot: true, lastRunPath: path.join(tmpDir, "last-run.json"), screenshotDir: path.join(tmpDir, "screenshots") });
 
       scheduler.enqueue([
         {
@@ -157,7 +157,7 @@ describe("Screenshot capture", () => {
     it("saves screenshot to .kaze/screenshots/<sanitized-name>-<testId>-<timestamp>.png", async () => {
       const pngData = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
       const { pool } = makeMockPoolWithScreenshot(() => Promise.resolve(pngData));
-      const scheduler = new Scheduler(pool, { screenshot: true, lastRunPath: path.join(tmpDir, "last-run.json") });
+      const scheduler = new Scheduler(pool, { screenshot: true, lastRunPath: path.join(tmpDir, "last-run.json"), screenshotDir: path.join(tmpDir, "screenshots") });
 
       scheduler.enqueue([
         {
@@ -175,8 +175,8 @@ describe("Screenshot capture", () => {
       // Must end with .png
       expect(p).toMatch(/\.png$/);
 
-      // Must be inside .kaze/screenshots/
-      expect(p).toContain(path.join(".kaze", "screenshots"));
+      // Must be inside the configured screenshotsDir (tmpDir/screenshots)
+      expect(p).toContain(path.join(tmpDir, "screenshots"));
 
       // Filename must use sanitized test name + testId (spaces → dashes)
       const filename = path.basename(p);
@@ -186,7 +186,7 @@ describe("Screenshot capture", () => {
     it("replaces special characters in test name with dashes", async () => {
       const pngData = Buffer.from([0]);
       const { pool } = makeMockPoolWithScreenshot(() => Promise.resolve(pngData));
-      const scheduler = new Scheduler(pool, { screenshot: true, lastRunPath: path.join(tmpDir, "last-run.json") });
+      const scheduler = new Scheduler(pool, { screenshot: true, lastRunPath: path.join(tmpDir, "last-run.json"), screenshotDir: path.join(tmpDir, "screenshots") });
 
       scheduler.enqueue([
         {
@@ -208,7 +208,7 @@ describe("Screenshot capture", () => {
     it("AC-9: two tests with same name but different ids produce different filenames", async () => {
       const pngData = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
       const { pool } = makeMockPoolWithScreenshot(() => Promise.resolve(pngData));
-      const scheduler = new Scheduler(pool, { screenshot: true, lastRunPath: path.join(tmpDir, "last-run.json") });
+      const scheduler = new Scheduler(pool, { screenshot: true, lastRunPath: path.join(tmpDir, "last-run.json"), screenshotDir: path.join(tmpDir, "screenshots") });
 
       scheduler.enqueue([
         {
@@ -236,7 +236,7 @@ describe("Screenshot capture", () => {
     it("actually writes the PNG file to disk", async () => {
       const pngData = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
       const { pool } = makeMockPoolWithScreenshot(() => Promise.resolve(pngData));
-      const scheduler = new Scheduler(pool, { screenshot: true, lastRunPath: path.join(tmpDir, "last-run.json") });
+      const scheduler = new Scheduler(pool, { screenshot: true, lastRunPath: path.join(tmpDir, "last-run.json"), screenshotDir: path.join(tmpDir, "screenshots") });
 
       scheduler.enqueue([
         {
@@ -261,7 +261,7 @@ describe("Screenshot capture", () => {
     it("uses 'unnamed' fallback when test name is empty string", async () => {
       const pngData = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
       const { pool } = makeMockPoolWithScreenshot(() => Promise.resolve(pngData));
-      const scheduler = new Scheduler(pool, { screenshot: true, lastRunPath: path.join(tmpDir, "last-run.json") });
+      const scheduler = new Scheduler(pool, { screenshot: true, lastRunPath: path.join(tmpDir, "last-run.json"), screenshotDir: path.join(tmpDir, "screenshots") });
 
       scheduler.enqueue([
         {
@@ -281,7 +281,7 @@ describe("Screenshot capture", () => {
     it("uses 'unnamed' fallback when test name is all non-ASCII (converts to all dashes)", async () => {
       const pngData = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
       const { pool } = makeMockPoolWithScreenshot(() => Promise.resolve(pngData));
-      const scheduler = new Scheduler(pool, { screenshot: true, lastRunPath: path.join(tmpDir, "last-run.json") });
+      const scheduler = new Scheduler(pool, { screenshot: true, lastRunPath: path.join(tmpDir, "last-run.json"), screenshotDir: path.join(tmpDir, "screenshots") });
 
       scheduler.enqueue([
         {
@@ -302,7 +302,7 @@ describe("Screenshot capture", () => {
       const longName = "a".repeat(300);
       const pngData = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
       const { pool } = makeMockPoolWithScreenshot(() => Promise.resolve(pngData));
-      const scheduler = new Scheduler(pool, { screenshot: true, lastRunPath: path.join(tmpDir, "last-run.json") });
+      const scheduler = new Scheduler(pool, { screenshot: true, lastRunPath: path.join(tmpDir, "last-run.json"), screenshotDir: path.join(tmpDir, "screenshots") });
 
       scheduler.enqueue([
         {
@@ -332,7 +332,7 @@ describe("Screenshot capture", () => {
     it("does not capture screenshot when screenshot=false", async () => {
       const pngData = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
       const { pool, adapter } = makeMockPoolWithScreenshot(() => Promise.resolve(pngData));
-      const scheduler = new Scheduler(pool, { screenshot: false, lastRunPath: path.join(tmpDir, "last-run.json") });
+      const scheduler = new Scheduler(pool, { screenshot: false, lastRunPath: path.join(tmpDir, "last-run.json"), screenshotDir: path.join(tmpDir, "screenshots") });
 
       scheduler.enqueue([
         {
@@ -353,7 +353,7 @@ describe("Screenshot capture", () => {
       const pngData = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
       const { pool, adapter } = makeMockPoolWithScreenshot(() => Promise.resolve(pngData));
       // No options passed — screenshot should default to enabled
-      const scheduler = new Scheduler(pool, { lastRunPath: path.join(tmpDir, "last-run.json") });
+      const scheduler = new Scheduler(pool, { lastRunPath: path.join(tmpDir, "last-run.json"), screenshotDir: path.join(tmpDir, "screenshots") });
 
       scheduler.enqueue([
         {
@@ -378,7 +378,7 @@ describe("Screenshot capture", () => {
       const { pool } = makeMockPoolWithScreenshot(async () => {
         throw new Error("screenshot failed: connection lost");
       });
-      const scheduler = new Scheduler(pool, { screenshot: true, lastRunPath: path.join(tmpDir, "last-run.json") });
+      const scheduler = new Scheduler(pool, { screenshot: true, lastRunPath: path.join(tmpDir, "last-run.json"), screenshotDir: path.join(tmpDir, "screenshots") });
 
       scheduler.enqueue([
         {
@@ -398,7 +398,7 @@ describe("Screenshot capture", () => {
 
     it("adapter without screenshot method is handled gracefully", async () => {
       const pool = makeMockPoolNoScreenshot();
-      const scheduler = new Scheduler(pool, { screenshot: true, lastRunPath: path.join(tmpDir, "last-run.json") });
+      const scheduler = new Scheduler(pool, { screenshot: true, lastRunPath: path.join(tmpDir, "last-run.json"), screenshotDir: path.join(tmpDir, "screenshots") });
 
       scheduler.enqueue([
         {

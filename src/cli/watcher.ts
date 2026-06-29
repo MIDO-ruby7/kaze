@@ -19,9 +19,13 @@ import type { ReporterMode } from "./reporter.js";
 // Public API
 // ---------------------------------------------------------------------------
 
-export async function watch(
-  opts: RunOptions & { patterns: string[]; reporterMode?: ReporterMode },
-): Promise<void> {
+export interface WatchOptions extends RunOptions {
+  patterns: string[];
+  reporterMode?: ReporterMode;
+  screenshot?: boolean;
+}
+
+export async function watch(opts: WatchOptions): Promise<void> {
   const cwd = process.cwd();
   const reporterMode = opts.reporterMode ?? "verbose";
 
@@ -80,6 +84,7 @@ export async function watch(
       patterns,
       workers: opts.workers,
       timeout: opts.timeout,
+      screenshot: opts.screenshot,
     };
     try {
       const results = await run(runOpts, pool);
