@@ -152,14 +152,21 @@ export class BrowserPool {
     // This guarantees complete state isolation (cookies, IndexedDB, Service
     // Workers) at the cost of one newContext() call per test.
     managed.state = "replacing";
-    void this._replaceContext(managed);
+    void this._replaceContext(managed, pooled._onReset);
   }
 
   /**
    * Close the used context and open a brand-new one in its slot.
    * Fires and forgets from release() so callers are not blocked.
+   *
+   * @param onReset - Optional callback from the Page that held this context.
+   *   Called before adapter.resetContext() so Page-level route state is cleared
+   *   in sync with the adapter-level reset (AC-14).
    */
-  private async _replaceContext(managed: ManagedContext): Promise<void> {
+  private async _replaceContext(
+    managed: ManagedContext,
+    onReset?: () => Promise<void>,
+  ): Promise<void> {
     if (this.closed) return;
 
     const proc = this.processes.find((p) => p.adapterId === managed.adapterId);
@@ -172,6 +179,9 @@ export class BrowserPool {
 
     try {
       if (proc.adapter.resetContext) {
+        // AC-14: Clear Page-level state (routes, subscriptions) before the
+        // adapter resets CDP state, keeping both layers in sync.
+        if (onReset) await onReset().catch(() => {});
         // Approach C: reset in-place (~20ms) — reuses the page process,
         // clears all state via CDP (cookies incl. HttpOnly, storage, SW).
         // Identical isolation to close+create but ~35x faster.

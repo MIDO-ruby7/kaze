@@ -12,6 +12,13 @@ export interface PooledContext {
    * The field is optional to keep pool-internal code free of Page dependencies.
    */
   _cancel?: () => void;
+  /**
+   * AC-14: Optional reset hook registered by the Page that is currently using
+   * this context.  BrowserPool calls this before adapter.resetContext() so that
+   * Page-level state (route handlers, subscriptions) is cleared in sync with
+   * the adapter-level state reset.
+   */
+  _onReset?: () => Promise<void>;
 }
 
 export interface PoolStats {

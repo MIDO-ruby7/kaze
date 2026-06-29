@@ -737,15 +737,17 @@ export class CdpAdapter implements ProtocolAdapter {
   /**
    * Start a background loop that listens for Fetch.requestPaused events and
    * dispatches them to registered handlers.
-   * The loop exits when interception is disabled for this context.
+   * The loop exits when interception is disabled for this context or when the
+   * session is closed. A waitForEvent timeout (60s) causes the loop to continue
+   * so that a quiet page does not stop interception.
    */
   private _startRequestPausedLoop(contextId: ContextId, session: CdpPageSession): void {
-    const pump = (): void => {
-      if (!this.interceptionEnabled.get(contextId)) return;
+    const pump = async (): Promise<void> => {
+      while (this.interceptionEnabled.has(contextId)) {
+        try {
+          const params = await session.waitForEvent("Fetch.requestPaused", 60_000);
 
-      session.waitForEvent("Fetch.requestPaused", 60_000)
-        .then((params) => {
-          if (!this.interceptionEnabled.get(contextId)) {
+          if (!this.interceptionEnabled.has(contextId)) {
             // Interception was disabled while we were waiting. The request is
             // still paused — release it so it doesn't hang.
             const staleId = params.requestId as string;
@@ -770,16 +772,21 @@ export class CdpAdapter implements ProtocolAdapter {
             void this.continueRequest(contextId, requestId).catch(() => {});
             this.pendingPausedRequests.get(contextId)?.delete(requestId);
           }
-
-          // Continue the loop
-          pump();
-        })
-        .catch(() => {
-          // Session closed or timed out — stop pumping
-        });
+        } catch (err) {
+          // Distinguish between a 60s idle timeout (continue the loop) and a
+          // real session error such as WebSocket close (stop the loop).
+          const msg = err instanceof Error ? err.message : String(err);
+          if (msg.includes("Timeout") && this.interceptionEnabled.has(contextId)) {
+            // Timeout on a quiet page — keep listening
+            continue;
+          }
+          // Session closed or unexpected error — stop pumping
+          break;
+        }
+      }
     };
 
-    pump();
+    void pump();
   }
 
   async closeContext(contextId: ContextId): Promise<void> {

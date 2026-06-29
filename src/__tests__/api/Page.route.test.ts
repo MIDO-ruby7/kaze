@@ -74,20 +74,31 @@ describe("Page.route", () => {
     expect(adapter.disableRequestInterception).toHaveBeenCalledWith("ctx-1");
   });
 
-  it("adapter.resetContext() flow: after reset, routes no longer fire", async () => {
-    // Simulate the actual AC-4 codepath: adapter.resetContext() disables
-    // interception so any new requests through the old page should not reach
-    // handlers (the page's _unsubscribeRequest listener is detached).
+  it("AC-10/AC-14: ctx._onReset() calls resetRoutes(), clearing routes and disabling interception", async () => {
+    // Verify the actual codepath: BrowserPool calls ctx._onReset() before
+    // adapter.resetContext(), which must invoke Page.resetRoutes() so that
+    // route handlers and the onRequest subscription are cleared in sync with
+    // the adapter-level reset.
     const handler = vi.fn();
     await page.route("/api/users", handler);
 
-    // Call disableRequestInterception directly (what resetContext triggers via
-    // the adapter) then verify the unsubscribe was invoked.
-    const unsubscribeSpy = (adapter.onRequest as ReturnType<typeof vi.fn>).mock.results[0]?.value as ReturnType<typeof vi.fn>;
-    expect(typeof unsubscribeSpy).toBe("function");
+    // The page should have registered a route
+    expect(adapter.enableRequestInterception).toHaveBeenCalledWith("ctx-1");
+    expect(adapter.onRequest).toHaveBeenCalledWith("ctx-1", expect.any(Function));
 
-    await adapter.disableRequestInterception!("ctx-1");
+    // ctx._onReset is the hook BrowserPool will call — invoke it directly to
+    // simulate the release() → _replaceContext() codepath.
+    expect(typeof ctx._onReset).toBe("function");
+    await ctx._onReset!();
+
+    // After reset, interception should be disabled
     expect(adapter.disableRequestInterception).toHaveBeenCalledWith("ctx-1");
+
+    // Subsequent requests should no longer reach the handler
+    const onRequestCb = (adapter.onRequest as ReturnType<typeof vi.fn>).mock.calls[0][1] as (req: { requestId: string; url: string }) => void;
+    onRequestCb({ requestId: "req-reset", url: "/api/users" });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(handler).not.toHaveBeenCalled();
   });
 
   it("pattern matching: exact string match", async () => {

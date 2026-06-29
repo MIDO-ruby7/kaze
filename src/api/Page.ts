@@ -82,6 +82,10 @@ export class Page {
     // AC-11: Register a cancellation hook on the context so that Scheduler can
     // stop polling after a test times out, without importing Page directly.
     ctx._cancel = () => this.cancel();
+    // AC-14: Register a reset hook so that BrowserPool can clear Page-level
+    // route state (handlers, subscriptions) before adapter.resetContext() is
+    // called.  This keeps Page and adapter state in sync across context reuse.
+    ctx._onReset = () => this.resetRoutes();
   }
 
   /**
