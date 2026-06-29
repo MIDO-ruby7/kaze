@@ -273,7 +273,7 @@ describe("downloadAndInstall", () => {
           return fakeReq;
         },
       };
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+       
       void cb; // cb is the response handler, not called in error path
       return fakeReq as ReturnType<typeof httpsMod.default.get>;
     });
