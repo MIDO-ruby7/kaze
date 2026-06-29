@@ -30,6 +30,12 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build
+        run: pnpm build
+
+      - name: Install Chromium
+        run: node -e "import('./dist/installer/index.js').then(m => m.installBrowser())"
+
       - name: Lint
         run: pnpm lint
 
@@ -38,3 +44,5 @@ jobs:
 
       - name: Test
         run: pnpm test
+        env:
+          KAZE_SKIP_E2E: ""
