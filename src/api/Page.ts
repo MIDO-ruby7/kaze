@@ -304,7 +304,16 @@ export class Page {
           : Promise.resolve(),
     );
 
-    match(route);
+    // AC-8: Wrap in Promise so async handler rejections don't become unhandled
+    // Promise rejections. After the handler resolves/rejects, fall back to
+    // continue() if the handler never called fulfill/continue/abort.
+    Promise.resolve(match(route)).catch(() => {
+      // handler threw — fall through to the fallback below
+    }).finally(() => {
+      if (!route._handled) {
+        void this.adapter.continueRequest?.(this.contextId, req.requestId);
+      }
+    });
   }
 
   /**

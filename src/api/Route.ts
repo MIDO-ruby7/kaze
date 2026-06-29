@@ -16,6 +16,14 @@ export interface FulfillOptions {
 }
 
 export class Route {
+  /**
+   * AC-7: Guard flag — set to true once any of fulfill/continue/abort is called.
+   * Subsequent calls on the same Route instance will throw "Route already settled".
+   * Also used by Page._handleInterceptedRequest to detect handlers that forgot to
+   * call any of these methods (fallback to continue()).
+   */
+  _handled = false;
+
   constructor(
     /** Opaque requestId provided by the adapter (e.g. CDP Fetch requestId). */
     readonly requestId: string,
@@ -29,6 +37,8 @@ export class Route {
    * AC-2: route.fulfill({ status?, headers?, body?, json? })
    */
   async fulfill(options: FulfillOptions): Promise<void> {
+    if (this._handled) throw new Error("Route already settled");
+    this._handled = true;
     await this._fulfill(options);
   }
 
@@ -37,6 +47,8 @@ export class Route {
    * AC-2: route.continue()
    */
   async continue(): Promise<void> {
+    if (this._handled) throw new Error("Route already settled");
+    this._handled = true;
     await this._continue();
   }
 
@@ -45,6 +57,8 @@ export class Route {
    * AC-2: route.abort()
    */
   async abort(): Promise<void> {
+    if (this._handled) throw new Error("Route already settled");
+    this._handled = true;
     await this._abort();
   }
 }

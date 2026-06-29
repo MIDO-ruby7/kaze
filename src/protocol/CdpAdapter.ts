@@ -511,6 +511,11 @@ export class CdpAdapter implements ProtocolAdapter {
    * Per-context interception enabled flag (used to start/stop Fetch.requestPaused listening).
    */
   private interceptionEnabled = new Map<ContextId, boolean>();
+  /**
+   * AC-9: Track paused requestIds per context so that resetContext can release
+   * any in-flight paused requests before calling Fetch.disable.
+   */
+  private pendingPausedRequests = new Map<ContextId, Set<string>>();
 
   constructor(options: CdpAdapterOptions = {}) {
     const port = options.port ?? 9222;
@@ -622,6 +627,16 @@ export class CdpAdapter implements ProtocolAdapter {
 
     // AC-4: disable request interception if it was enabled for this context
     if (this.interceptionEnabled.get(contextId)) {
+      // AC-9: Release any in-flight paused requests before disabling Fetch.
+      // Fetch.disable stops future pauses but does not unblock already-paused
+      // requests; those need an explicit continueRequest response.
+      const pending = this.pendingPausedRequests.get(contextId);
+      if (pending && pending.size > 0) {
+        for (const requestId of pending) {
+          await session.send("Fetch.continueRequest", { requestId }).catch(() => {});
+        }
+        this.pendingPausedRequests.delete(contextId);
+      }
       await session.send("Fetch.disable");
       this.interceptionEnabled.delete(contextId);
       this.requestListeners.delete(contextId);
@@ -642,6 +657,7 @@ export class CdpAdapter implements ProtocolAdapter {
     });
     this.interceptionEnabled.set(contextId, true);
     this.requestListeners.set(contextId, new Set());
+    this.pendingPausedRequests.set(contextId, new Set());
 
     // Start listening loop for Fetch.requestPaused events
     this._startRequestPausedLoop(contextId, session);
@@ -653,6 +669,7 @@ export class CdpAdapter implements ProtocolAdapter {
     await session.send("Fetch.disable");
     this.interceptionEnabled.delete(contextId);
     this.requestListeners.delete(contextId);
+    this.pendingPausedRequests.delete(contextId);
   }
 
   async fulfillRequest(contextId: ContextId, requestId: string, opts: FulfillOptions): Promise<void> {
@@ -677,16 +694,22 @@ export class CdpAdapter implements ProtocolAdapter {
       responseHeaders: headers,
       body: Buffer.from(body).toString("base64"),
     });
+    // AC-9: Request is no longer paused once responded to
+    this.pendingPausedRequests.get(contextId)?.delete(requestId);
   }
 
   async continueRequest(contextId: ContextId, requestId: string): Promise<void> {
     const session = this.getSession(contextId);
     await session.send("Fetch.continueRequest", { requestId });
+    // AC-9: Request is no longer paused once continued
+    this.pendingPausedRequests.get(contextId)?.delete(requestId);
   }
 
   async abortRequest(contextId: ContextId, requestId: string): Promise<void> {
     const session = this.getSession(contextId);
     await session.send("Fetch.failRequest", { requestId, errorReason: "Aborted" });
+    // AC-9: Request is no longer paused once aborted
+    this.pendingPausedRequests.get(contextId)?.delete(requestId);
   }
 
   onRequest(
@@ -710,11 +733,20 @@ export class CdpAdapter implements ProtocolAdapter {
 
       session.waitForEvent("Fetch.requestPaused", 60_000)
         .then((params) => {
-          if (!this.interceptionEnabled.get(contextId)) return;
+          if (!this.interceptionEnabled.get(contextId)) {
+            // Interception was disabled while we were waiting. The request is
+            // still paused — release it so it doesn't hang.
+            const staleId = params.requestId as string;
+            void session.send("Fetch.continueRequest", { requestId: staleId }).catch(() => {});
+            return;
+          }
 
           const requestId = params.requestId as string;
           const url = (params.request as { url: string }).url;
           const req: InterceptedRequest = { requestId, url };
+
+          // AC-9: Track this paused request so resetContext can release it
+          this.pendingPausedRequests.get(contextId)?.add(requestId);
 
           const listeners = this.requestListeners.get(contextId);
           if (listeners && listeners.size > 0) {
@@ -724,6 +756,7 @@ export class CdpAdapter implements ProtocolAdapter {
           } else {
             // No handlers — continue automatically
             void this.continueRequest(contextId, requestId).catch(() => {});
+            this.pendingPausedRequests.get(contextId)?.delete(requestId);
           }
 
           // Continue the loop
