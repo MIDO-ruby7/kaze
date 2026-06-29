@@ -169,6 +169,9 @@ function httpsGetRedirect(url: string): Promise<Buffer> {
  * Only handles DEFLATE (method 8) and stored (method 0) entries.
  */
 export function extractZip(zipBuffer: Buffer, destDir: string): void {
+  // Normalize destDir to an absolute path with trailing separator for prefix checks
+  const normalizedDestDir = path.resolve(destDir) + path.sep;
+
   fs.mkdirSync(destDir, { recursive: true });
 
   let offset = 0;
@@ -193,11 +196,22 @@ export function extractZip(zipBuffer: Buffer, destDir: string): void {
 
     if (fileName.endsWith("/")) {
       // Directory entry
-      fs.mkdirSync(path.join(destDir, fileName), { recursive: true });
+      const dirPath = path.join(destDir, fileName);
+      // Guard against path traversal for directory entries
+      if (!path.resolve(dirPath).startsWith(normalizedDestDir)) {
+        throw new Error(`ZIP path traversal detected: ${fileName}`);
+      }
+      fs.mkdirSync(dirPath, { recursive: true });
       continue;
     }
 
-    const outPath = path.join(destDir, fileName);
+    const outPath = path.resolve(path.join(destDir, fileName));
+
+    // Guard: reject any entry whose resolved path escapes destDir (B-2)
+    if (!outPath.startsWith(normalizedDestDir)) {
+      throw new Error(`ZIP path traversal detected: ${fileName}`);
+    }
+
     fs.mkdirSync(path.dirname(outPath), { recursive: true });
 
     if (compression === 0) {
@@ -221,18 +235,26 @@ export async function downloadAndInstall(version: string, downloadUrl: string): 
   const installDir = chromiumInstallDir(version);
   fs.mkdirSync(installDir, { recursive: true });
 
-  const zipBuffer = await httpsGetRedirect(downloadUrl);
-  extractZip(zipBuffer, installDir);
+  try {
+    const zipBuffer = await httpsGetRedirect(downloadUrl);
+    extractZip(zipBuffer, installDir);
 
-  // Make the chromium binary executable on unix
-  if (process.platform !== "win32") {
-    const bins = ["chrome", "chromium", "chrome-linux", "chrome-mac"];
-    for (const bin of bins) {
-      const binPath = findFile(installDir, bin);
-      if (binPath) {
-        fs.chmodSync(binPath, 0o755);
+    // Make the chromium binary executable on unix
+    if (process.platform !== "win32") {
+      const bins = ["chrome", "chromium", "chrome-linux", "chrome-mac"];
+      for (const bin of bins) {
+        const binPath = findFile(installDir, bin);
+        if (binPath) {
+          fs.chmodSync(binPath, 0o755);
+        }
       }
     }
+  } catch (err) {
+    // Clean up the install directory to preserve idempotency:
+    // without this, a partial/empty directory would cause isInstalled() to
+    // return true on the next run, silently skipping the installation.
+    fs.rmSync(installDir, { recursive: true, force: true });
+    throw err;
   }
 }
 

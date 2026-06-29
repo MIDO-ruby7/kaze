@@ -1,7 +1,7 @@
 import os from "node:os";
 import path from "node:path";
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 
 import {
   detectPlatform,
@@ -9,6 +9,7 @@ import {
   isInstalled,
   chromiumInstallDir,
   extractZip,
+  downloadAndInstall,
   type KnownGoodVersionsResponse,
 } from "./download.js";
 
@@ -79,7 +80,7 @@ describe("detectPlatform", () => {
   const originalPlatform = process.platform;
   const originalArch = process.arch;
 
-  beforeEach(() => {
+  afterEach(() => {
     // Reset after each test
     Object.defineProperty(process, "platform", { value: originalPlatform, writable: true });
     Object.defineProperty(process, "arch", { value: originalArch, writable: true });
@@ -139,7 +140,7 @@ describe("isInstalled", () => {
 });
 
 // ---------------------------------------------------------------------------
-// extractZip (basic smoke test)
+// extractZip (basic smoke test + path traversal guard)
 // ---------------------------------------------------------------------------
 
 describe("extractZip", () => {
@@ -208,5 +209,123 @@ describe("extractZip", () => {
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
+  });
+
+  it("throws on path traversal attempt (B-2)", async () => {
+    const { default: fs } = await import("node:fs");
+    const { default: osMod } = await import("node:os");
+    const { default: pathMod } = await import("node:path");
+
+    // Build a ZIP with a traversal path: "../escape.txt"
+    const content = Buffer.from("evil");
+    const traversalName = "../escape.txt";
+    const fileNameBuf = Buffer.from(traversalName);
+
+    const localHeader = Buffer.alloc(30 + fileNameBuf.length);
+    localHeader.writeUInt32LE(0x04034b50, 0);
+    localHeader.writeUInt16LE(20, 4);
+    localHeader.writeUInt16LE(0, 6);
+    localHeader.writeUInt16LE(0, 8); // stored
+    localHeader.writeUInt16LE(0, 10);
+    localHeader.writeUInt16LE(0, 12);
+    localHeader.writeUInt32LE(0, 14);
+    localHeader.writeUInt32LE(content.length, 18);
+    localHeader.writeUInt32LE(content.length, 22);
+    localHeader.writeUInt16LE(fileNameBuf.length, 26);
+    localHeader.writeUInt16LE(0, 28);
+    fileNameBuf.copy(localHeader, 30);
+
+    const zip = Buffer.concat([localHeader, content]);
+
+    const tmpDir = fs.mkdtempSync(pathMod.join(osMod.tmpdir(), "kaze-traversal-"));
+    try {
+      expect(() => extractZip(zip, tmpDir)).toThrow("path traversal");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// downloadAndInstall (B-1: idempotency cleanup on failure)
+// ---------------------------------------------------------------------------
+
+describe("downloadAndInstall", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("cleans up install directory when download fails (B-1)", async () => {
+    const fsMod = await import("node:fs");
+    const fsSpy = vi.spyOn(fsMod.default, "mkdirSync").mockImplementation(() => undefined);
+
+    const rmSpy = vi.spyOn(fsMod.default, "rmSync").mockImplementation(() => undefined);
+
+    // httpsGetRedirect is internal, so we mock https.get via node:https
+    const httpsMod = await import("node:https");
+    vi.spyOn(httpsMod.default, "get").mockImplementation((_url, cb) => {
+      // Simulate a network error by calling the error handler
+      const fakeReq = {
+        on: (event: string, handler: (err: Error) => void) => {
+          if (event === "error") {
+            handler(new Error("network error"));
+          }
+          return fakeReq;
+        },
+      };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      void cb; // cb is the response handler, not called in error path
+      return fakeReq as ReturnType<typeof httpsMod.default.get>;
+    });
+
+    await expect(
+      downloadAndInstall("122.0.6261.57", "https://example.com/chrome.zip"),
+    ).rejects.toThrow("network error");
+
+    // rmSync must have been called to clean up the partial install directory
+    expect(rmSpy).toHaveBeenCalledWith(
+      expect.stringContaining("chromium-122.0.6261.57"),
+      expect.objectContaining({ recursive: true, force: true }),
+    );
+
+    fsSpy.mockRestore();
+    rmSpy.mockRestore();
+  });
+
+  it("does not call rmSync when download and install succeed", async () => {
+    const fsMod = await import("node:fs");
+
+    // Minimal valid ZIP buffer (just enough to not throw in extractZip)
+    const emptyZip = Buffer.alloc(4);
+    emptyZip.writeUInt32LE(0x06054b50, 0); // EOCD signature — triggers break immediately
+
+    vi.spyOn(fsMod.default, "mkdirSync").mockImplementation(() => undefined);
+    vi.spyOn(fsMod.default, "readdirSync").mockReturnValue([]);
+    const rmSpy = vi.spyOn(fsMod.default, "rmSync").mockImplementation(() => undefined);
+
+    const httpsMod = await import("node:https");
+    vi.spyOn(httpsMod.default, "get").mockImplementation((_url, cb) => {
+      const chunks: Buffer[] = [emptyZip];
+      const fakeRes = {
+        statusCode: 200,
+        headers: {},
+        on: (event: string, handler: (arg?: Buffer) => void) => {
+          if (event === "data") chunks.forEach((c) => handler(c));
+          if (event === "end") handler();
+          return fakeRes;
+        },
+        resume: () => {},
+      };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (cb as any)(fakeRes);
+      const fakeReq = {
+        on: (_e: string, _h: unknown) => fakeReq,
+      };
+      return fakeReq as ReturnType<typeof httpsMod.default.get>;
+    });
+
+    await downloadAndInstall("122.0.6261.57", "https://example.com/chrome.zip");
+
+    expect(rmSpy).not.toHaveBeenCalled();
   });
 });
