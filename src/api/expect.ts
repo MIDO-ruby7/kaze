@@ -9,6 +9,7 @@
 
 import type { Locator } from "./Locator.js";
 import type { Page } from "./Page.js";
+import { escapeSelector } from "./utils.js";
 
 const DEFAULT_TIMEOUT_MS = 5_000;
 const POLL_INTERVAL_MS = 100;
@@ -148,10 +149,6 @@ export function expect(target: Locator | Page): LocatorMatchers | PageMatchers {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function escapeSelector(selector: string): string {
-  return selector.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
 }
 
 export class AssertionError extends Error {

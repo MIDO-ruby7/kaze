@@ -98,4 +98,27 @@ describe("Page", () => {
   it("contextId is exposed", () => {
     expect(page.contextId).toBe("ctx-1");
   });
+
+  describe("selector escaping (B-1)", () => {
+    it("fill escapes attribute selector with single quotes", async () => {
+      await page.fill("[data-id='123']", "hello");
+      const expr = (adapter.evaluate as ReturnType<typeof vi.fn>).mock.calls[0][1] as string;
+      // The selector single-quote must be escaped to \' in the JS string
+      expect(expr).toContain("[data-id=\\'123\\']");
+    });
+
+    it("textContent escapes attribute selector with single quotes", async () => {
+      (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValue("result");
+      await page.textContent("[data-id='123']");
+      const expr = (adapter.evaluate as ReturnType<typeof vi.fn>).mock.calls[0][1] as string;
+      expect(expr).toContain("[data-id=\\'123\\']");
+    });
+
+    it("waitForSelector escapes attribute selector with single quotes", async () => {
+      (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+      await page.waitForSelector("[data-id='123']");
+      const expr = (adapter.evaluate as ReturnType<typeof vi.fn>).mock.calls[0][1] as string;
+      expect(expr).toContain("[data-id=\\'123\\']");
+    });
+  });
 });

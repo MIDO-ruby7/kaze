@@ -8,6 +8,7 @@ import type { PooledContext } from "../pool/types.js";
 import type { ProtocolAdapter } from "../protocol/index.js";
 
 import { Locator } from "./Locator.js";
+import { escapeSelector } from "./utils.js";
 
 export interface GotoOptions {
   /** Maximum navigation timeout in milliseconds. Defaults to 30000. */
@@ -43,14 +44,15 @@ export class Page {
   /** Fill an input element matching `selector` with `value`. */
   async fill(selector: string, value: string): Promise<void> {
     // Focus and set .value via JS, then dispatch input/change events.
-    const escaped = value.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+    const escapedSel = escapeSelector(selector);
+    const escapedVal = value.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
     await this.adapter.evaluate(
       this.contextId,
       `(function() {
-        const el = document.querySelector('${selector}');
-        if (!el) throw new Error('Element not found: ${selector}');
+        const el = document.querySelector('${escapedSel}');
+        if (!el) throw new Error('Element not found: ${escapedSel}');
         el.focus();
-        el.value = '${escaped}';
+        el.value = '${escapedVal}';
         el.dispatchEvent(new Event('input', { bubbles: true }));
         el.dispatchEvent(new Event('change', { bubbles: true }));
       })()`,
@@ -59,10 +61,11 @@ export class Page {
 
   /** Return the text content of the first element matching `selector`. */
   async textContent(selector: string): Promise<string | null> {
+    const escapedSel = escapeSelector(selector);
     const result = await this.adapter.evaluate(
       this.contextId,
       `(function() {
-        const el = document.querySelector('${selector}');
+        const el = document.querySelector('${escapedSel}');
         return el ? el.textContent : null;
       })()`,
     );
@@ -78,11 +81,12 @@ export class Page {
     const timeout = opts?.timeout ?? 30_000;
     const interval = 100;
     const deadline = Date.now() + timeout;
+    const escapedSel = escapeSelector(selector);
 
     while (Date.now() < deadline) {
       const found = await this.adapter.evaluate(
         this.contextId,
-        `!!document.querySelector('${selector}')`,
+        `!!document.querySelector('${escapedSel}')`,
       );
       if (found) return;
       await delay(interval);

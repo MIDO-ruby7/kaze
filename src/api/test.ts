@@ -101,7 +101,11 @@ export function collectTestCases(adapter: ProtocolAdapter): TestCase[] {
     timeout: p.timeout,
     fn: async (ctx: PooledContext): Promise<void> => {
       const page = createPage(adapter, ctx);
-      await p.fn(page);
+      try {
+        await p.fn(page);
+      } finally {
+        await page.close();
+      }
     },
   }));
 }

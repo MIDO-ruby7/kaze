@@ -92,4 +92,28 @@ describe("test()", () => {
     const cases = collectTestCases(makeAdapter());
     expect(cases[0]!.id).not.toBe(cases[1]!.id);
   });
+
+  it("GAP-1: page.close() is called in finally even when test throws", async () => {
+    test("throws", async (_page) => {
+      throw new Error("test error");
+    });
+
+    const adapter = makeAdapter();
+    const cases = collectTestCases(adapter);
+    const ctx: PooledContext = { contextId: "ctx-1", adapterId: "a-1" };
+
+    await expect(cases[0]!.fn(ctx)).rejects.toThrow("test error");
+    expect(adapter.closeContext).toHaveBeenCalledWith("ctx-1");
+  });
+
+  it("GAP-1: page.close() is called after a successful test", async () => {
+    test("success", async (_page) => {});
+
+    const adapter = makeAdapter();
+    const cases = collectTestCases(adapter);
+    const ctx: PooledContext = { contextId: "ctx-1", adapterId: "a-1" };
+
+    await cases[0]!.fn(ctx);
+    expect(adapter.closeContext).toHaveBeenCalledWith("ctx-1");
+  });
 });
