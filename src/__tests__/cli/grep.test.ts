@@ -204,3 +204,51 @@ describe("grep filtering (AC-5, AC-6)", () => {
     ]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// AC-11: invalid regex patterns exit with code 2
+// ---------------------------------------------------------------------------
+
+describe("invalid regex handling (AC-11)", () => {
+  beforeEach(() => {
+    _resetRegistry();
+  });
+
+  it("invalid grep pattern calls process.exit(2)", () => {
+    kazeTest("some test", async () => {});
+
+    const mockExit = vi.spyOn(process, "exit").mockImplementation((code) => {
+      throw new Error(`process.exit(${code})`);
+    });
+    const mockError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    try {
+      expect(() => collectTestCases(stubPool, { grep: "[invalid" })).toThrow("process.exit(2)");
+      expect(mockError).toHaveBeenCalledWith(
+        expect.stringContaining('[kaze] Invalid grep pattern: "[invalid"'),
+      );
+    } finally {
+      mockExit.mockRestore();
+      mockError.mockRestore();
+    }
+  });
+
+  it("invalid grepInvert pattern calls process.exit(2)", () => {
+    kazeTest("some test", async () => {});
+
+    const mockExit = vi.spyOn(process, "exit").mockImplementation((code) => {
+      throw new Error(`process.exit(${code})`);
+    });
+    const mockError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    try {
+      expect(() => collectTestCases(stubPool, { grepInvert: "(((" })).toThrow("process.exit(2)");
+      expect(mockError).toHaveBeenCalledWith(
+        expect.stringContaining('[kaze] Invalid grep pattern: "((("'),
+      );
+    } finally {
+      mockExit.mockRestore();
+      mockError.mockRestore();
+    }
+  });
+});

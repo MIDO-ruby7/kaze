@@ -188,3 +188,51 @@ describe("test.describe.skip (AC-4)", () => {
     expect(cases).toHaveLength(0);
   });
 });
+
+// ---------------------------------------------------------------------------
+// AC-12: cross-file scope of test.only
+// ---------------------------------------------------------------------------
+
+describe("test.only cross-file scope (AC-12)", () => {
+  vitestBeforeEach(() => {
+    _resetRegistry();
+  });
+
+  it("test.only in 'file A' excludes normal tests that would come from 'file B'", () => {
+    // Simulate two spec files being loaded before collectTestCases is called.
+    // File A registers a normal test and a test.only.
+    // File B registers only normal tests.
+    // Because _onlyMode is a module singleton, file B's normal tests must be
+    // excluded — matching Playwright's global .only behaviour.
+
+    // --- file A ---
+    test("file-a: normal", async (_page) => {});
+    test.only("file-a: only", async (_page) => {});
+
+    // --- file B (simulated: same registry, different "conceptual file") ---
+    test("file-b: normal 1", async (_page) => {});
+    test("file-b: normal 2", async (_page) => {});
+
+    const cases = collectTestCases(makePool());
+    // Only the .only test should survive; file B's normal tests are excluded.
+    expect(cases).toHaveLength(1);
+    expect(cases[0]!.name).toBe("file-a: only");
+  });
+
+  it("test.only registered after normal tests from another 'file' still excludes those tests", () => {
+    // File B's tests are registered first, then file A's .only comes later.
+    // Order should not matter — _onlyMode is applied at collectTestCases time.
+
+    // --- file B ---
+    test("file-b: alpha", async (_page) => {});
+    test("file-b: beta", async (_page) => {});
+
+    // --- file A ---
+    test.only("file-a: only", async (_page) => {});
+    test("file-a: normal", async (_page) => {});
+
+    const cases = collectTestCases(makePool());
+    expect(cases).toHaveLength(1);
+    expect(cases[0]!.name).toBe("file-a: only");
+  });
+});

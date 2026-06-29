@@ -56,7 +56,17 @@ let _hooks: RegisteredHook[] = [];
 let _idCounter = 0;
 let _currentDescribe = "";
 
-/** Whether any test.only / test.describe.only has been registered in this file run. */
+/**
+ * Whether any test.only / test.describe.only has been registered in this file run.
+ *
+ * NOTE (AC-12 — cross-file scope):
+ * `_onlyMode` is a module-level singleton. `runner.ts` imports all spec files
+ * and then calls `collectTestCases` once. Therefore, if **any** spec file
+ * registers a `test.only` or `test.describe.only`, **all** other tests across
+ * every spec file in the same `collectTestCases` call are excluded — not just
+ * the tests in the file that contains the `.only`.
+ * This mirrors Playwright's global `.only` behaviour.
+ */
 let _onlyMode = false;
 /** Set of full names registered via test.only or test.describe.only. */
 const _onlyNames = new Set<string>();
@@ -245,13 +255,25 @@ export function collectTestCases(pool: AdapterResolver, opts?: CollectOptions): 
     pending = pending.filter((p) => _onlyNames.has(p.name));
   }
 
-  // Apply grep / grepInvert filters (AC-5, AC-6)
+  // Apply grep / grepInvert filters (AC-5, AC-6, AC-11)
   if (opts?.grep) {
-    const re = new RegExp(opts.grep);
+    let re: RegExp;
+    try {
+      re = new RegExp(opts.grep);
+    } catch {
+      console.error(`[kaze] Invalid grep pattern: "${opts.grep}"`);
+      process.exit(2);
+    }
     pending = pending.filter((p) => re.test(p.name));
   }
   if (opts?.grepInvert) {
-    const re = new RegExp(opts.grepInvert);
+    let re: RegExp;
+    try {
+      re = new RegExp(opts.grepInvert);
+    } catch {
+      console.error(`[kaze] Invalid grep pattern: "${opts.grepInvert}"`);
+      process.exit(2);
+    }
     pending = pending.filter((p) => !re.test(p.name));
   }
 
