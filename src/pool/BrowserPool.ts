@@ -308,6 +308,8 @@ export class BrowserPool {
       try {
         await proc.adapter.evaluate(ctx.contextId, "1");
         ctx.state = "idle";
+        // Wake up any waiters that queued while this context was being probed.
+        this._drainQueue();
         if (!this.closed && !proc.restarting) {
           setTimeout(() => void probe(), PROBE_INTERVAL_MS);
         }

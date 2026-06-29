@@ -374,6 +374,78 @@ describe("B-3 / GAP-2: release() with stale adapterId drains waitQueue", () => {
 });
 
 // ---------------------------------------------------------------------------
+// B-2: probe marks ctx as busy during health check
+// ---------------------------------------------------------------------------
+
+describe("B-2: probe marks ctx as busy during health check", () => {
+  it("should not return a context that is being probed", async () => {
+    // We need fine-grained control over evaluate to pause probe mid-flight.
+    // Use a deferred promise: probe will call evaluate and hang until we resolve.
+    let resolveEvaluate!: (v: number) => void;
+    const evaluateLatch = new Promise<number>((res) => {
+      resolveEvaluate = res;
+    });
+
+    // Track how many times evaluate was called
+    let evaluateCallCount = 0;
+
+    vi.useFakeTimers();
+
+    const pool = new BrowserPool();
+
+    try {
+      await pool.init({ maxProcesses: 1, maxContextsPerProcess: 1 });
+
+      // Override the evaluate mock on the adapter created during init
+      const adapter = createdAdapters[0]!;
+      adapter.evaluate.mockImplementation(() => {
+        evaluateCallCount++;
+        return evaluateLatch; // hangs until we manually resolve
+      });
+
+      // Advance fake timers by the PROBE_INTERVAL_MS (500 ms) so probe() fires.
+      vi.advanceTimersByTime(500);
+
+      // Give the probe a tick to start executing and call evaluate
+      await Promise.resolve();
+      await Promise.resolve();
+
+      // evaluate should have been called exactly once (probe is now waiting inside evaluateLatch)
+      expect(evaluateCallCount).toBe(1);
+
+      // At this point the context state should be "busy" (probe set it before calling evaluate).
+      // acquire() must not return it.
+      let acquireResolved = false;
+      const pendingAcquire = pool.acquire().then((c) => {
+        acquireResolved = true;
+        return c;
+      });
+
+      // Flush pending microtasks — acquire() should remain pending because the
+      // only context is still held by the probe.
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(acquireResolved).toBe(false);
+
+      // Now let probe complete by resolving evaluate.
+      resolveEvaluate(1);
+
+      // After probe finishes, the context should return to "idle" and the queued
+      // acquire() should be resolved.
+      const ctx = await pendingAcquire;
+      expect(acquireResolved).toBe(true);
+      expect(typeof ctx.contextId).toBe("string");
+
+      pool.release(ctx);
+    } finally {
+      // Always restore real timers to avoid leaking into subsequent tests.
+      vi.useRealTimers();
+      await pool.close();
+    }
+  }, 10_000);
+});
+
+// ---------------------------------------------------------------------------
 // AC-6 (mock variant): 8 concurrent acquire/release × 50 rounds — no deadlock
 // ---------------------------------------------------------------------------
 
