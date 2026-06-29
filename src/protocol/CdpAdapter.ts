@@ -345,8 +345,15 @@ export class CdpAdapter implements ProtocolAdapter {
         "--use-mock-keychain",
         `--user-data-dir=${this.tmpDir}`,
       ],
-      { stdio: "ignore" },
+      {
+        stdio: "ignore",
+        // detached=true puts the browser in its own process group so we can
+        // kill the entire group (browser + GPU process + renderer etc.) at once.
+        detached: true,
+      },
     );
+    // Unref so the Node.js process doesn't wait for Chromium if we forget close()
+    this.process.unref();
 
     await waitForDevTools(port);
 
@@ -456,12 +463,36 @@ export class CdpAdapter implements ProtocolAdapter {
     }
 
     if (this.process) {
-      this.process.kill();
-      await new Promise<void>((resolve) => {
-        this.process!.once("exit", () => resolve());
-        setTimeout(resolve, 3000); // safety timeout
-      });
+      const proc = this.process;
       this.process = null;
+
+      await new Promise<void>((resolve) => {
+        proc.once("exit", resolve);
+
+        // Kill the entire process group (negative PID) to ensure all
+        // child processes (GPU, renderer, crashpad) are terminated.
+        const killGroup = (signal: NodeJS.Signals): void => {
+          try {
+            if (proc.pid !== undefined) {
+              process.kill(-proc.pid, signal);
+            }
+          } catch {
+            // Process already dead or no group — fall back to direct kill
+            try { proc.kill(signal); } catch { /* already gone */ }
+          }
+        };
+
+        killGroup("SIGTERM");
+
+        // If still alive after 1s, escalate to SIGKILL
+        const sigkillTimer = setTimeout(() => {
+          killGroup("SIGKILL");
+          // Hard deadline — resolve even if exit event never fires
+          setTimeout(resolve, 1000);
+        }, 1000);
+
+        proc.once("exit", () => clearTimeout(sigkillTimer));
+      });
     }
 
     // GAP-3: delete the temporary profile directory

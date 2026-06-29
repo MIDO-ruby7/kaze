@@ -72,6 +72,7 @@ export class BrowserPool {
   private totalCrashes = 0;
   private nextAdapterSeq = 0;
   private initOpts: BrowserPoolInitOptions = {};
+  private _exitHandler: (() => void) | null = null;
 
   // -------------------------------------------------------------------------
   // AC-1: init
@@ -94,6 +95,13 @@ export class BrowserPool {
         this._spawnProcess(basePort + i, sizing.contextsPerProcess),
       ),
     );
+
+    // Ensure browsers are killed if the Node.js process exits unexpectedly
+    // (e.g. Ctrl+C, uncaught exception) so no orphaned Chromium processes remain.
+    this._exitHandler = () => { void this.close(); };
+    process.once("exit", this._exitHandler);
+    process.once("SIGINT", this._exitHandler);
+    process.once("SIGTERM", this._exitHandler);
   }
 
   // -------------------------------------------------------------------------
@@ -192,6 +200,14 @@ export class BrowserPool {
     if (this.closed) return;
     this.closed = true;
 
+    // Remove exit handlers registered in init()
+    if (this._exitHandler) {
+      process.off("exit", this._exitHandler);
+      process.off("SIGINT", this._exitHandler);
+      process.off("SIGTERM", this._exitHandler);
+      this._exitHandler = null;
+    }
+
     // B-1: Reject all queued waiters so their promises settle immediately.
     const err = new Error("BrowserPool closed while waiting for a context");
     for (const waiter of this.waitQueue) {
@@ -199,7 +215,7 @@ export class BrowserPool {
     }
     this.waitQueue = [];
 
-    // Close all processes
+    // Close all processes (sends SIGTERM → SIGKILL to the process group)
     await Promise.all(this.processes.map((p) => this._closeProcess(p)));
     this.processes = [];
   }
