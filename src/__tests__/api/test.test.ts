@@ -5,7 +5,15 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 import { Page } from "../../api/Page.js";
-import { test, collectTestCases, _resetRegistry } from "../../api/test.js";
+import {
+  test,
+  beforeAll,
+  afterAll,
+  beforeEach,
+  afterEach,
+  collectTestCases,
+  _resetRegistry,
+} from "../../api/test.js";
 import type { PooledContext } from "../../pool/types.js";
 import type { ProtocolAdapter } from "../../protocol/index.js";
 
@@ -117,5 +125,102 @@ describe("test()", () => {
     await cases[0]!.fn(ctx);
     // pool manages context lifecycle — closeContext is NOT called by collectTestCases
     expect(adapter.closeContext).not.toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Lifecycle hooks
+// ---------------------------------------------------------------------------
+
+describe("lifecycle hooks", () => {
+  const ctx: PooledContext = { contextId: "ctx-1", adapterId: "a-1" };
+
+  it("beforeEach runs before each test", async () => {
+    const order: string[] = [];
+    beforeEach(() => { order.push("beforeEach"); });
+    test("t1", async () => { order.push("t1"); });
+    test("t2", async () => { order.push("t2"); });
+
+    const cases = collectTestCases(makePool());
+    for (const c of cases) await c.fn(ctx);
+
+    expect(order).toEqual(["beforeEach", "t1", "beforeEach", "t2"]);
+  });
+
+  it("afterEach runs after each test", async () => {
+    const order: string[] = [];
+    afterEach(() => { order.push("afterEach"); });
+    test("t1", async () => { order.push("t1"); });
+    test("t2", async () => { order.push("t2"); });
+
+    const cases = collectTestCases(makePool());
+    for (const c of cases) await c.fn(ctx);
+
+    expect(order).toEqual(["t1", "afterEach", "t2", "afterEach"]);
+  });
+
+  it("beforeAll runs once before all tests in scope", async () => {
+    const order: string[] = [];
+    beforeAll(() => { order.push("beforeAll"); });
+    test("t1", async () => { order.push("t1"); });
+    test("t2", async () => { order.push("t2"); });
+
+    const cases = collectTestCases(makePool());
+    for (const c of cases) await c.fn(ctx);
+
+    expect(order).toEqual(["beforeAll", "t1", "t2"]);
+  });
+
+  it("afterAll runs once after all tests in scope", async () => {
+    const order: string[] = [];
+    afterAll(() => { order.push("afterAll"); });
+    test("t1", async () => { order.push("t1"); });
+    test("t2", async () => { order.push("t2"); });
+
+    const cases = collectTestCases(makePool());
+    for (const c of cases) await c.fn(ctx);
+
+    expect(order).toEqual(["t1", "t2", "afterAll"]);
+  });
+
+  it("hooks in describe scope only apply to tests in that scope", async () => {
+    const order: string[] = [];
+    test.describe("Suite", () => {
+      beforeEach(() => { order.push("suite:beforeEach"); });
+      test("inner", async () => { order.push("inner"); });
+    });
+    test("outer", async () => { order.push("outer"); });
+
+    const cases = collectTestCases(makePool());
+    for (const c of cases) await c.fn(ctx);
+
+    // "Suite > inner": hook runs, then test
+    expect(order).toEqual(["suite:beforeEach", "inner", "outer"]);
+  });
+
+  it("outer beforeEach runs for inner describe tests too", async () => {
+    const order: string[] = [];
+    beforeEach(() => { order.push("outer:beforeEach"); });
+    test.describe("Suite", () => {
+      beforeEach(() => { order.push("inner:beforeEach"); });
+      test("t", async () => { order.push("t"); });
+    });
+
+    const cases = collectTestCases(makePool());
+    await cases[0]!.fn(ctx);
+
+    // outer beforeEach runs first, then inner
+    expect(order).toEqual(["outer:beforeEach", "inner:beforeEach", "t"]);
+  });
+
+  it("afterEach runs even when test throws", async () => {
+    const order: string[] = [];
+    afterEach(() => { order.push("afterEach"); });
+    test("throws", async () => { throw new Error("fail"); });
+
+    const cases = collectTestCases(makePool());
+    await expect(cases[0]!.fn(ctx)).rejects.toThrow("fail");
+
+    expect(order).toEqual(["afterEach"]);
   });
 });

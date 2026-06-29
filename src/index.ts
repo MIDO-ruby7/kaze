@@ -15,7 +15,7 @@ export function name(): string {
 // Playwright-compatible Test API (AC-7)
 // ---------------------------------------------------------------------------
 
-export { test } from "./api/test.js";
+export { test, beforeAll, afterAll, beforeEach, afterEach } from "./api/test.js";
 export { expect } from "./api/expect.js";
 export { Page, createPage } from "./api/Page.js";
 export { Locator } from "./api/Locator.js";
