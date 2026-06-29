@@ -490,6 +490,73 @@ describe("AC-6: concurrency stress (mocked, no real Chromium)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// AC-14: release() → _onReset called before adapter.resetContext()
+// ---------------------------------------------------------------------------
+
+describe("AC-14: release() calls _onReset before adapter.resetContext()", () => {
+  it("_onReset is invoked before resetContext when releasing a context", async () => {
+    // Build a call-order log so we can assert sequencing.
+    const callOrder: string[] = [];
+
+    // Override the mock factory for this test to include resetContext.
+    // We cannot reassign the module-level vi.mock, so we manipulate the
+    // adapter instance after it is created by the pool.
+    const pool = new BrowserPool();
+    await pool.init({ maxProcesses: 1, maxContextsPerProcess: 1 });
+
+    // The adapter created during init is in createdAdapters[last].
+    const adapter = createdAdapters[createdAdapters.length - 1]!;
+
+    // Attach a resetContext spy that records its invocation order.
+    (adapter as unknown as Record<string, unknown>).resetContext = vi.fn().mockImplementation(() => {
+      callOrder.push("resetContext");
+      return Promise.resolve();
+    });
+
+    // Acquire a context so we can customise _onReset on the PooledContext.
+    const ctx = await pool.acquire();
+
+    // Attach the _onReset hook — this is the same hook that Page registers.
+    ctx._onReset = vi.fn().mockImplementation(async () => {
+      callOrder.push("_onReset");
+    });
+
+    // Release the context — BrowserPool should call _onReset then resetContext.
+    pool.release(ctx);
+
+    // Wait for the async _replaceContext to complete.
+    await new Promise<void>((r) => setTimeout(r, 50));
+
+    expect(ctx._onReset).toHaveBeenCalledTimes(1);
+    expect((adapter as unknown as { resetContext: ReturnType<typeof vi.fn> }).resetContext).toHaveBeenCalledTimes(1);
+
+    // The critical ordering assertion: _onReset must precede resetContext.
+    expect(callOrder).toEqual(["_onReset", "resetContext"]);
+
+    await pool.close();
+  });
+
+  it("release() without _onReset still calls resetContext", async () => {
+    const pool = new BrowserPool();
+    await pool.init({ maxProcesses: 1, maxContextsPerProcess: 1 });
+
+    const adapter = createdAdapters[createdAdapters.length - 1]!;
+    const resetContextSpy = vi.fn().mockResolvedValue(undefined);
+    (adapter as unknown as Record<string, unknown>).resetContext = resetContextSpy;
+
+    const ctx = await pool.acquire();
+    // No _onReset set — plain release.
+    pool.release(ctx);
+
+    await new Promise<void>((r) => setTimeout(r, 50));
+
+    expect(resetContextSpy).toHaveBeenCalledTimes(1);
+
+    await pool.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Approach B: context replacement on release (test isolation guarantee)
 // ---------------------------------------------------------------------------
 
