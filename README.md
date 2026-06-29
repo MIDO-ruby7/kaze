@@ -34,6 +34,31 @@ pnpm install
 pnpm install && pnpm test
 ```
 
+## 設定ファイル (kaze.config.ts)
+
+プロジェクトルートに `kaze.config.ts` を作成すると設定を永続化できます。
+
+```typescript
+import { defineConfig } from "kaze"
+export default defineConfig({
+  workers: 20,
+  timeout: 60000,
+  reporter: "dot",
+  testMatch: ["src/**/*.spec.ts"],
+  screenshot: true,
+})
+```
+
+| フィールド | 型 | デフォルト | 説明 |
+| ---------- | -- | ---------- | ---- |
+| `workers` | `number` (正の整数) | システム依存 | 並列ワーカー数 |
+| `timeout` | `number` (正の整数, ms) | `30000` | テストごとのタイムアウト |
+| `reporter` | `"verbose" \| "dot"` | `"verbose"` | 出力フォーマット |
+| `testMatch` | `string[]` | 自動検出 | 実行対象のグロブパターン |
+| `screenshot` | `boolean` | `true` | 失敗・タイムアウト時のスクリーンショット |
+
+CLI フラグは常に設定ファイルより優先されます。例: 設定に `screenshot: false` があっても `kaze --screenshot=on` で有効化できます。
+
 ## スクリーンショット
 
 テストが失敗・タイムアウトすると自動で `.kaze/screenshots/` に保存されます。
