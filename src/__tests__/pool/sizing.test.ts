@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { computePoolSizing } from "../../pool/sizing.js";
+
 import type { HostResources } from "../../pool/resources.js";
+import { computePoolSizing } from "../../pool/sizing.js";
 
 // Helper: build a HostResources object with given totalMemMB and cpuCount.
 // freeMemMB defaults to totalMemMB (no OS overhead) to keep tests predictable.
@@ -98,6 +99,37 @@ describe("computePoolSizing", () => {
   // AC-5: CI-like environment (very low free RAM, single CPU)
   it("AC-5: CI narrow environment guarantees minimum {1,1}", () => {
     const resources = makeResources(512, 1, 100);
+    const result = computePoolSizing(resources);
+    expect(result.processCount).toBeGreaterThanOrEqual(1);
+    expect(result.contextsPerProcess).toBeGreaterThanOrEqual(1);
+  });
+
+  // GAP-1: insufficientMemory flag
+  it("GAP-1: insufficientMemory=true when freeMemMB < 400", () => {
+    // 399 MB is just below the 400 MB threshold (350 process + 50 context)
+    const resources = makeResources(1024, 4, 399);
+    const result = computePoolSizing(resources);
+    expect(result.insufficientMemory).toBe(true);
+  });
+
+  it("GAP-1: insufficientMemory=false when freeMemMB >= 400", () => {
+    const resources = makeResources(1024, 4, 400);
+    const result = computePoolSizing(resources);
+    expect(result.insufficientMemory).toBe(false);
+  });
+
+  it("GAP-1: insufficientMemory=false for normal RAM (8 GB)", () => {
+    const resources = makeResources(8 * 1024, 4);
+    const result = computePoolSizing(resources);
+    expect(result.insufficientMemory).toBe(false);
+  });
+
+  // GAP-2: cpuCount=0 boundary — sizing must still return a valid result
+  it("GAP-2: cpuCount=0 input still returns processCount >= 1", () => {
+    // cpuCount=0 simulates an environment where os.cpus() returns an empty array.
+    // computePoolSizing should treat it like cpuCount=1 (guarded by probeHostResources,
+    // but we also verify the pure function handles it gracefully).
+    const resources = makeResources(8 * 1024, 0);
     const result = computePoolSizing(resources);
     expect(result.processCount).toBeGreaterThanOrEqual(1);
     expect(result.contextsPerProcess).toBeGreaterThanOrEqual(1);

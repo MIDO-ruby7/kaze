@@ -12,6 +12,12 @@ export interface PoolSizing {
   processCount: number;
   /** Number of browser contexts to open per process. */
   contextsPerProcess: number;
+  /**
+   * True when free RAM is below the minimum threshold required to run even one
+   * browser process with one context (350 MB process + 50 MB context = 400 MB).
+   * Callers can use this flag to warn users or refuse to start the pool.
+   */
+  insufficientMemory: boolean;
 }
 
 /** User-provided overrides that cap the computed values. */
@@ -38,6 +44,10 @@ export function computePoolSizing(
   opts?: PoolSizingOpts,
 ): PoolSizing {
   const { freeMemMB, cpuCount } = resources;
+
+  // GAP-1: Detect insufficient memory (< 400 MB = 350 process + 50 context).
+  const MINIMUM_MEMORY_MB = DEFAULT_RAM_PER_PROCESS_MB + DEFAULT_RAM_PER_CONTEXT_MB;
+  const insufficientMemory = freeMemMB < MINIMUM_MEMORY_MB;
 
   // Step 1: How many processes can we fit in free RAM?
   //   Each process needs at least DEFAULT_RAM_PER_PROCESS_MB (+ 1 context).
@@ -74,5 +84,6 @@ export function computePoolSizing(
   return {
     processCount: Math.max(1, finalProcessCount),
     contextsPerProcess: Math.max(1, finalContextsPerProcess),
+    insufficientMemory,
   };
 }
