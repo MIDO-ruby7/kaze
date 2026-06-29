@@ -374,4 +374,160 @@ describe("Scheduler", () => {
       expect(typeof result.durationMs).toBe("number");
     });
   });
+
+  // -------------------------------------------------------------------------
+  // B-1: queue is cleared after run() — no duplicate execution on second run
+  // -------------------------------------------------------------------------
+  describe("B-1: queue cleared after run()", () => {
+    it("does not re-run tests from a previous run when enqueue→run→enqueue→run", async () => {
+      const { pool } = makeMockPool(2);
+      const scheduler = new Scheduler(pool);
+
+      const firstRunIds: string[] = [];
+      const secondRunIds: string[] = [];
+
+      const tests1: TestCase[] = [
+        { id: "r1-a", name: "Run1 A", fn: async () => { firstRunIds.push("r1-a"); } },
+        { id: "r1-b", name: "Run1 B", fn: async () => { firstRunIds.push("r1-b"); } },
+      ];
+      const tests2: TestCase[] = [
+        { id: "r2-a", name: "Run2 A", fn: async () => { secondRunIds.push("r2-a"); } },
+      ];
+
+      scheduler.enqueue(tests1);
+      await scheduler.run();
+
+      scheduler.enqueue(tests2);
+      await scheduler.run();
+
+      // First run tests must not appear in second run
+      expect(firstRunIds).toHaveLength(2);
+      expect(secondRunIds).toHaveLength(1);
+      expect(secondRunIds).not.toContain("r1-a");
+      expect(secondRunIds).not.toContain("r1-b");
+    });
+
+    it("second run only contains tests enqueued after first run", async () => {
+      const { pool } = makeMockPool(2);
+      const scheduler = new Scheduler(pool);
+
+      const executed: string[] = [];
+
+      scheduler.enqueue([
+        { id: "first", name: "First", fn: async () => { executed.push("first"); } },
+      ]);
+      const firstResults = await scheduler.run();
+
+      scheduler.enqueue([
+        { id: "second", name: "Second", fn: async () => { executed.push("second"); } },
+      ]);
+      const secondResults = await scheduler.run();
+
+      expect(firstResults).toHaveLength(1);
+      expect(firstResults[0].id).toBe("first");
+      expect(secondResults).toHaveLength(1);
+      expect(secondResults[0].id).toBe("second");
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // GAP-1: run() concurrent call guard
+  // -------------------------------------------------------------------------
+  describe("GAP-1: run() rejects while already running", () => {
+    it("rejects the second run() call if the first has not finished", async () => {
+      const { pool } = makeMockPool(1);
+      const scheduler = new Scheduler(pool);
+
+      // Enqueue a test that takes a bit
+      scheduler.enqueue([
+        {
+          id: "slow",
+          name: "Slow",
+          fn: async () => { await new Promise((r) => setTimeout(r, 50)); },
+        },
+      ]);
+
+      const firstRun = scheduler.run();
+
+      // Attempt a second concurrent run immediately
+      await expect(scheduler.run()).rejects.toThrow(/already in progress/i);
+
+      // First run should still complete normally
+      const results = await firstRun;
+      expect(results).toHaveLength(1);
+      expect(results[0].status).toBe("passed");
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // GAP-2: pool.close() during run() does not hang
+  // -------------------------------------------------------------------------
+  describe("GAP-2: acquire() rejection is handled gracefully", () => {
+    it("records failed result and continues when acquire() rejects", async () => {
+      // Pool whose acquire() rejects immediately
+      const failPool = {
+        acquire: vi.fn(async () => { throw new Error("BrowserPool is closed"); }),
+        release: vi.fn(),
+        init: vi.fn().mockResolvedValue(undefined),
+        close: vi.fn().mockResolvedValue(undefined),
+        stats: vi.fn().mockReturnValue({ totalContexts: 0, busy: 0, idle: 0, processes: 0, crashes: 0 }),
+      } as unknown as BrowserPool;
+
+      const scheduler = new Scheduler(failPool);
+      scheduler.enqueue([
+        { id: "t1", name: "T1", fn: async () => {} },
+        { id: "t2", name: "T2", fn: async () => {} },
+      ]);
+
+      // run() should resolve (not throw) even though acquire() always rejects
+      const results = await scheduler.run();
+
+      expect(results).toHaveLength(2);
+      expect(results.every((r) => r.status === "failed")).toBe(true);
+      expect(results[0].error).toMatch(/BrowserPool is closed/);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // GAP-3: _writeLastRun failure does not throw from run()
+  // -------------------------------------------------------------------------
+  describe("GAP-3: last-run.json write failure does not throw", () => {
+    it("returns results normally even when the filesystem write fails", async () => {
+      const { pool } = makeMockPool(1);
+      const scheduler = new Scheduler(pool);
+
+      // Place a regular file at the .kaze path so that mkdir(..., {recursive: true})
+      // succeeds but writeFile fails because the target directory path conflicts.
+      // Easier: put a regular FILE at the .kaze directory path so mkdir throws.
+      // But recursive mkdir ignores EEXIST. Instead we write a file *at* the
+      // last-run.json path's parent but as a non-directory entry.
+      //
+      // The most reliable approach: temporarily create .kaze as a file so that
+      // fs.mkdir(".kaze", { recursive: true }) throws ENOTDIR.
+      const kazeDir = LAST_RUN_DIR;
+
+      // Remove any existing .kaze dir/file first
+      try {
+        await fs.rm(kazeDir, { recursive: true, force: true });
+      } catch { /* ignore */ }
+
+      // Create .kaze as a regular file — mkdir will fail with ENOTDIR
+      await fs.writeFile(kazeDir, "blocker");
+
+      scheduler.enqueue([
+        { id: "ok", name: "OK", fn: async () => {} },
+      ]);
+
+      // run() must not throw despite write failure
+      const results = await scheduler.run();
+
+      expect(results).toHaveLength(1);
+      expect(results[0].status).toBe("passed");
+
+      // Restore: remove the blocker file
+      try {
+        await fs.rm(kazeDir, { force: true });
+      } catch { /* ignore */ }
+    });
+  });
 });

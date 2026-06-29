@@ -38,6 +38,8 @@ interface LastRunData {
 
 export class Scheduler {
   private queue: TestCase[] = [];
+  /** True while run() is executing — prevents concurrent run() calls. */
+  private _running = false;
 
   constructor(private readonly pool: BrowserPool) {}
 
@@ -54,24 +56,39 @@ export class Scheduler {
   // -------------------------------------------------------------------------
 
   async run(): Promise<TestResult[]> {
-    // AC-3: reorder queue so previously-failed tests go first
-    const orderedTests = await this._prioritize([...this.queue]);
+    // GAP-1: Guard against concurrent run() calls
+    if (this._running) {
+      return Promise.reject(new Error("Scheduler.run() is already in progress"));
+    }
+    this._running = true;
 
-    const results: TestResult[] = [];
+    // B-1: Snapshot the queue then clear it so a subsequent enqueue→run does
+    // not repeat the same tests.
+    const snapshot = [...this.queue];
+    this.queue = [];
 
-    // Run tests in parallel, bounded by pool.acquire() (which blocks when all
-    // slots are busy, naturally capping concurrency at pool size).
-    await Promise.all(
-      orderedTests.map(async (test) => {
-        const result = await this._runOne(test);
-        results.push(result);
-      }),
-    );
+    try {
+      // AC-3: reorder queue so previously-failed tests go first
+      const orderedTests = await this._prioritize(snapshot);
 
-    // AC-3: persist results for next run
-    await this._writeLastRun(results);
+      const results: TestResult[] = [];
 
-    return results;
+      // Run tests in parallel, bounded by pool.acquire() (which blocks when all
+      // slots are busy, naturally capping concurrency at pool size).
+      await Promise.all(
+        orderedTests.map(async (test) => {
+          const result = await this._runOne(test);
+          results.push(result);
+        }),
+      );
+
+      // AC-3: persist results for next run
+      await this._writeLastRun(results);
+
+      return results;
+    } finally {
+      this._running = false;
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -83,19 +100,38 @@ export class Scheduler {
     const start = Date.now();
 
     // AC-2: acquire a context — blocks if pool is saturated
-    const ctx = await this.pool.acquire();
+    // GAP-2: If acquire() rejects (e.g. pool.close() called mid-run), record
+    // the test as failed and let the overall run() continue.
+    let ctx;
+    try {
+      ctx = await this.pool.acquire();
+    } catch (err: unknown) {
+      return {
+        id: test.id,
+        name: test.name,
+        status: "failed",
+        durationMs: Date.now() - start,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
 
     try {
-      // Race the test function against a timeout
-      await Promise.race([
-        test.fn(ctx),
-        new Promise<never>((_, reject) =>
-          setTimeout(
-            () => reject(new TimeoutError(`Test "${test.name}" timed out after ${timeout}ms`)),
-            timeout,
-          ),
-        ),
-      ]);
+      // B-2: Clear the timeout timer after Promise.race resolves or rejects to
+      // prevent timer leaks.
+      let timerId: ReturnType<typeof setTimeout> | undefined;
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timerId = setTimeout(
+          () => reject(new TimeoutError(`Test "${test.name}" timed out after ${timeout}ms`)),
+          timeout,
+        );
+      });
+
+      try {
+        // Race the test function against a timeout
+        await Promise.race([test.fn(ctx), timeoutPromise]);
+      } finally {
+        clearTimeout(timerId);
+      }
 
       return {
         id: test.id,
@@ -151,14 +187,23 @@ export class Scheduler {
   }
 
   private async _writeLastRun(results: TestResult[]): Promise<void> {
-    const failedIds = results
-      .filter((r) => r.status === "failed" || r.status === "timedOut")
-      .map((r) => r.id);
+    // GAP-3: If the write fails (e.g. read-only filesystem), warn and continue
+    // rather than throwing — the run results are still returned to the caller.
+    try {
+      const failedIds = results
+        .filter((r) => r.status === "failed" || r.status === "timedOut")
+        .map((r) => r.id);
 
-    const data: LastRunData = { failedIds };
+      const data: LastRunData = { failedIds };
 
-    await fs.mkdir(LAST_RUN_DIR, { recursive: true });
-    await fs.writeFile(LAST_RUN_PATH, JSON.stringify(data, null, 2), "utf-8");
+      await fs.mkdir(LAST_RUN_DIR, { recursive: true });
+      await fs.writeFile(LAST_RUN_PATH, JSON.stringify(data, null, 2), "utf-8");
+    } catch (err: unknown) {
+      console.warn(
+        "[Scheduler] Failed to write last-run.json:",
+        err instanceof Error ? err.message : String(err),
+      );
+    }
   }
 }
 
