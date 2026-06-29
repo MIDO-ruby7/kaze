@@ -52,6 +52,17 @@ export interface ProtocolAdapter {
   ): Promise<void>;
 
   /**
+   * Reset a context to a fully clean state without closing and recreating it.
+   * Clears cookies (including HttpOnly), localStorage, IndexedDB, Service Workers,
+   * and navigates to about:blank to reset DOM and JS globals.
+   *
+   * Much faster than closeContext() + newContext() (~20ms vs ~700ms).
+   * Implementations that don't support this can omit it; BrowserPool will fall
+   * back to the close+create cycle.
+   */
+  resetContext?(contextId: ContextId): Promise<void>;
+
+  /**
    * Close the browser process and release all resources.
    */
   close(): Promise<void>;

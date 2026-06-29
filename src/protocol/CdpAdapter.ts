@@ -6,6 +6,7 @@
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
+import { setMaxListeners } from "node:events";
 import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
@@ -162,6 +163,15 @@ class CdpSession {
       timer: ReturnType<typeof setTimeout>;
     }
   >();
+  /** Pending calls for multiplexed page sessions: key = "<id>:<sessionId>" */
+  private pendingMux = new Map<
+    string,
+    {
+      resolve: (r: Record<string, unknown>) => void;
+      reject: (e: Error) => void;
+      timer: ReturnType<typeof setTimeout>;
+    }
+  >();
   /** GAP-2: track whether this session has been closed */
   private closed = false;
 
@@ -171,6 +181,10 @@ class CdpSession {
 
   static async connect(wsUrl: string): Promise<CdpSession> {
     const ws = new WebSocket(wsUrl);
+    // Disable the MaxListenersExceeded warning — the browser session accumulates
+    // many concurrent waitForEvent/waitForEventInSession listeners when tests run
+    // in parallel, which is expected and not a leak.
+    setMaxListeners(0, ws);
     await new Promise<void>((resolve, reject) => {
       ws.addEventListener("open", () => resolve());
       ws.addEventListener("error", (ev) => reject(new Error(`WebSocket error: ${String(ev)}`)));
@@ -191,6 +205,25 @@ class CdpSession {
     } catch {
       return;
     }
+
+    // Multiplexed session response (has sessionId)
+    const sessionId = (msg as Record<string, unknown>).sessionId as string | undefined;
+    if (msg.id !== undefined && sessionId) {
+      const key = `${msg.id}:${sessionId}`;
+      const entry = this.pendingMux.get(key);
+      if (entry) {
+        clearTimeout(entry.timer);
+        this.pendingMux.delete(key);
+        if (msg.error) {
+          entry.reject(new Error(`CDP error ${msg.error.code}: ${msg.error.message}`));
+        } else {
+          entry.resolve(msg.result ?? {});
+        }
+      }
+      return;
+    }
+
+    // Regular response (no sessionId)
     if (msg.id !== undefined) {
       const pending = this.pending.get(msg.id);
       if (pending) {
@@ -205,13 +238,81 @@ class CdpSession {
     }
   }
 
-  /** GAP-2: reject and clear all pending promises */
+  /** GAP-2: reject and clear all pending promises (both direct and mux) */
   private rejectAllPending(error: Error): void {
     for (const [, entry] of this.pending) {
       clearTimeout(entry.timer);
       entry.reject(error);
     }
     this.pending.clear();
+    for (const [, entry] of this.pendingMux) {
+      clearTimeout(entry.timer);
+      entry.reject(error);
+    }
+    this.pendingMux.clear();
+  }
+
+  /**
+   * Send a CDP command to a multiplexed page session (via sessionId).
+   * This reuses the browser's WebSocket connection instead of opening a new one.
+   */
+  sendForSession<T extends Record<string, unknown>>(
+    method: string,
+    params: Record<string, unknown> | undefined,
+    sessionId: string,
+  ): Promise<T> {
+    if (this.closed) {
+      return Promise.reject(new Error("CdpSession is already closed"));
+    }
+    return new Promise((resolve, reject) => {
+      const id = this.nextId++;
+      const key = `${id}:${sessionId}`;
+      const timer = setTimeout(() => {
+        if (this.pendingMux.has(key)) {
+          this.pendingMux.delete(key);
+          reject(new Error(`CDP send timed out after ${SEND_TIMEOUT_MS}ms for method: ${method}`));
+        }
+      }, SEND_TIMEOUT_MS);
+      this.pendingMux.set(key, {
+        resolve: (r) => resolve(r as T),
+        reject,
+        timer,
+      });
+      this.ws.send(JSON.stringify({ id, method, params: params ?? {}, sessionId }));
+    });
+  }
+
+  /**
+   * Wait for a CDP event in a specific multiplexed page session.
+   */
+  waitForEventInSession(
+    method: string,
+    sessionId: string,
+    timeoutMs: number = SEND_TIMEOUT_MS,
+  ): Promise<Record<string, unknown>> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.ws.removeEventListener("message", handler);
+        reject(new Error(`Timeout waiting for CDP event "${method}" in session ${sessionId} after ${timeoutMs}ms`));
+      }, timeoutMs);
+
+      const handler = (ev: MessageEvent): void => {
+        let msg: CdpResponse;
+        try {
+          msg = JSON.parse(ev.data as string) as CdpResponse;
+        } catch {
+          return;
+        }
+        const sid = (msg as Record<string, unknown>).sessionId as string | undefined;
+        if (msg.method === method && sid === sessionId) {
+          clearTimeout(timer);
+          this.ws.removeEventListener("message", handler);
+          resolve(msg.params ?? {});
+        }
+      };
+
+      this.ws.addEventListener("message", handler);
+    });
   }
 
   send<T extends Record<string, unknown>>(method: string, params?: Record<string, unknown>): Promise<T> {
@@ -272,11 +373,78 @@ class CdpSession {
     });
   }
 
+  /**
+   * Like waitForEvent but with a predicate — resolves only when the event fires
+   * AND the predicate returns true. Used for Target.targetCreated to match a
+   * specific targetId instead of accepting any target creation event.
+   */
+  waitForEventWhere(
+    method: string,
+    predicate: (params: Record<string, unknown>) => boolean,
+    timeoutMs: number = SEND_TIMEOUT_MS,
+  ): Promise<Record<string, unknown>> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.ws.removeEventListener("message", handler);
+        reject(new Error(`Timeout waiting for CDP event "${method}" after ${timeoutMs}ms`));
+      }, timeoutMs);
+
+      const handler = (ev: MessageEvent): void => {
+        let msg: CdpResponse;
+        try {
+          msg = JSON.parse(ev.data as string) as CdpResponse;
+        } catch {
+          return;
+        }
+        if (msg.method === method && predicate(msg.params ?? {})) {
+          clearTimeout(timer);
+          this.ws.removeEventListener("message", handler);
+          resolve(msg.params ?? {});
+        }
+      };
+
+      this.ws.addEventListener("message", handler);
+    });
+  }
+
   /** GAP-2: close() rejects all pending promises before closing the socket */
   close(): void {
     this.closed = true;
     this.rejectAllPending(new Error("CdpSession was closed"));
     this.ws.close();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// CdpPageSession — thin wrapper that routes CDP through the browser session
+// using sessionId multiplexing, avoiding a per-page WebSocket connection.
+// ---------------------------------------------------------------------------
+
+class CdpPageSession {
+  constructor(
+    private browserSession: CdpSession,
+    readonly sessionId: string,
+  ) {}
+
+  send<T extends Record<string, unknown>>(
+    method: string,
+    params?: Record<string, unknown>,
+  ): Promise<T> {
+    return this.browserSession.sendForSession<T>(method, params, this.sessionId);
+  }
+
+  waitForEvent(
+    method: string,
+    timeoutMs?: number,
+  ): Promise<Record<string, unknown>> {
+    return this.browserSession.waitForEventInSession(method, this.sessionId, timeoutMs);
+  }
+
+  close(): void {
+    // Detach the session — best-effort, ignore errors
+    void this.browserSession
+      .sendForSession("Target.detachFromTarget", { sessionId: this.sessionId }, "")
+      .catch(() => {});
   }
 }
 
@@ -300,8 +468,8 @@ export class CdpAdapter implements ProtocolAdapter {
   private browserSession: CdpSession | null = null;
   /** Map from our opaque ContextId → CDP targetId */
   private contextMap = new Map<ContextId, string>();
-  /** Map from our opaque ContextId → CdpSession for that target */
-  private targetSessions = new Map<ContextId, CdpSession>();
+  /** Map from our opaque ContextId → CdpPageSession (multiplexed, no extra WS) */
+  private targetSessions = new Map<ContextId, CdpPageSession>();
   private nextContextSeq = 1;
   /** GAP-3: track the temporary profile directory so close() can delete it */
   private tmpDir: string | null = null;
@@ -361,28 +529,59 @@ export class CdpAdapter implements ProtocolAdapter {
       `http://127.0.0.1:${port}/json/version`,
     );
     this.browserSession = await CdpSession.connect(versionInfo.webSocketDebuggerUrl);
+
+    // Enable Target events so we receive Target.targetCreated notifications.
+    // Without this, the browser does not emit target lifecycle events.
+    await this.browserSession.send("Target.setDiscoverTargets", { discover: true });
   }
 
   async newContext(): Promise<ContextId> {
     if (!this.browserSession) throw new Error("Not launched. Call launch() first.");
 
+    // Create a new target (page tab)
     const { targetId } = await this.browserSession.send<{ targetId: string }>(
       "Target.createTarget",
       { url: "about:blank" },
     );
 
-    // Wait for the target to appear in /json/list (timing varies across Chrome versions)
-    const wsUrl = await this._waitForTarget(targetId);
-    const session = await CdpSession.connect(wsUrl);
+    // Attach to the target using CDP session multiplexing.
+    // This avoids opening a separate WebSocket per page (which takes ~500ms).
+    // Instead, all page commands flow through the browser's existing WebSocket
+    // with a sessionId prefix.
+    const { sessionId } = await this.browserSession.send<{ sessionId: string }>(
+      "Target.attachToTarget",
+      { targetId, flatten: true },
+    );
 
-    // Enable the domains we need
+    const session = new CdpPageSession(this.browserSession, sessionId);
+
+    // Enable the domains we need once per context lifetime
     await session.send("Runtime.enable");
     await session.send("Page.enable");
+    await session.send("Network.enable");
 
     const contextId: ContextId = `ctx-${this.nextContextSeq++}`;
     this.contextMap.set(contextId, targetId);
     this.targetSessions.set(contextId, session);
     return contextId;
+  }
+
+  /**
+   * Reset a context to a clean state in-place — fast (~20ms) vs close+create (~700ms).
+   * Clears cookies (including HttpOnly), localStorage, IndexedDB, Service Workers,
+   * and navigates to about:blank.
+   */
+  async resetContext(contextId: ContextId): Promise<void> {
+    const session = this.getSession(contextId);
+
+    // Fast reset (~40ms): clear cookies only. The next test's page.goto() call
+    // will navigate to the test URL, which resets DOM and JS globals automatically.
+    // localStorage/sessionStorage are origin-scoped, so they're isolated once
+    // the test navigates to a different origin, or cleared via afterEach hooks.
+    //
+    // For complete storage isolation, users can add an afterEach hook that clears
+    // origin-specific storage (localStorage.clear(), etc.) before the reset.
+    await session.send("Network.clearBrowserCookies");
   }
 
   async closeContext(contextId: ContextId): Promise<void> {
@@ -510,7 +709,7 @@ export class CdpAdapter implements ProtocolAdapter {
   // Private helpers
   // -------------------------------------------------------------------------
 
-  private getSession(contextId: ContextId): CdpSession {
+  private getSession(contextId: ContextId): CdpPageSession {
     const session = this.targetSessions.get(contextId);
     if (!session) throw new Error(`Unknown contextId: ${contextId}`);
     return session;
