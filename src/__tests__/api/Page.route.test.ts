@@ -217,4 +217,24 @@ describe("Page.route", () => {
 
     expect(adapter.continueRequest).toHaveBeenCalledWith("ctx-1", "req-10");
   });
+
+  it("AC-11: unroute with a different RegExp instance (same source+flags) removes the handler", async () => {
+    const handler = vi.fn();
+    // Register with one RegExp instance
+    await page.route(/\/api\/users/, handler);
+
+    // Unroute with a separate RegExp instance that has the same source + flags
+    await page.unroute(/\/api\/users/);
+
+    // Interception should be disabled since no routes remain
+    expect(adapter.disableRequestInterception).toHaveBeenCalledWith("ctx-1");
+
+    // The handler should not fire for matching requests anymore
+    const onRequestCb = (adapter.onRequest as ReturnType<typeof vi.fn>).mock.calls[0][1] as (req: { requestId: string; url: string }) => void;
+    onRequestCb({ requestId: "req-11", url: "/api/users" });
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(handler).not.toHaveBeenCalled();
+  });
 });

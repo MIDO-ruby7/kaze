@@ -58,10 +58,15 @@ export class Page {
   _cancelled = false;
 
   /**
-   * AC-1/AC-3: Registered route handlers keyed by their original pattern.
+   * AC-1/AC-3/AC-11: Registered route handlers keyed by a normalized string key.
+   * RegExp patterns are normalized via _routeKey() so that two RegExp instances
+   * with the same source + flags compare equal (Map identity would fail otherwise).
    * Using Map to preserve insertion order.
    */
-  private _routes = new Map<string | RegExp, (route: Route) => void>();
+  private _routes = new Map<string, (route: Route) => void>();
+
+  /** Parallel map from normalized key → original pattern, used for matchesPattern(). */
+  private _routePatterns = new Map<string, string | RegExp>();
 
   /**
    * AC-1: Unsubscribe function returned by adapter.onRequest. Set once
@@ -231,12 +236,23 @@ export class Page {
   }
 
   /**
+   * AC-11: Normalize a route pattern to a stable string key.
+   * Two RegExp instances with the same source + flags produce the same key.
+   */
+  private _routeKey(pattern: string | RegExp): string {
+    if (typeof pattern === "string") return pattern;
+    return `__regexp__${pattern.source}__${pattern.flags}`;
+  }
+
+  /**
    * AC-1: Intercept requests matching `pattern` with `handler`.
    * Pattern can be a string (exact match or glob with **) or RegExp.
    */
   async route(pattern: string | RegExp, handler: (route: Route) => void): Promise<void> {
     const wasEmpty = this._routes.size === 0;
-    this._routes.set(pattern, handler);
+    const key = this._routeKey(pattern);
+    this._routes.set(key, handler);
+    this._routePatterns.set(key, pattern);
 
     if (wasEmpty) {
       // Enable interception on first route registration
@@ -257,7 +273,9 @@ export class Page {
    * If no routes remain, disables interception.
    */
   async unroute(pattern: string | RegExp): Promise<void> {
-    this._routes.delete(pattern);
+    const key = this._routeKey(pattern);
+    this._routes.delete(key);
+    this._routePatterns.delete(key);
 
     if (this._routes.size === 0) {
       await this._disableInterception();
@@ -269,6 +287,7 @@ export class Page {
    */
   async resetRoutes(): Promise<void> {
     this._routes.clear();
+    this._routePatterns.clear();
     await this._disableInterception();
   }
 
@@ -321,7 +340,8 @@ export class Page {
    * Patterns are checked in insertion order.
    */
   private _findMatchingRoute(url: string): ((route: Route) => void) | undefined {
-    for (const [pattern, handler] of this._routes) {
+    for (const [key, handler] of this._routes) {
+      const pattern = this._routePatterns.get(key)!;
       if (matchesPattern(pattern, url)) {
         return handler;
       }

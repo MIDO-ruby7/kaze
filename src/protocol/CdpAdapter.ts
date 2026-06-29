@@ -666,6 +666,18 @@ export class CdpAdapter implements ProtocolAdapter {
   async disableRequestInterception(contextId: ContextId): Promise<void> {
     if (!this.interceptionEnabled.get(contextId)) return;
     const session = this.getSession(contextId);
+
+    // B-1: Drain in-flight paused requests before disabling (same pattern as resetContext).
+    // Fetch.disable stops future pauses but does not unblock already-paused requests;
+    // those need an explicit continueRequest response or they will hang.
+    const pending = this.pendingPausedRequests.get(contextId);
+    if (pending && pending.size > 0) {
+      await Promise.all([...pending].map((reqId) =>
+        session.send("Fetch.continueRequest", { requestId: reqId }).catch(() => {}),
+      ));
+      pending.clear();
+    }
+
     await session.send("Fetch.disable");
     this.interceptionEnabled.delete(contextId);
     this.requestListeners.delete(contextId);
