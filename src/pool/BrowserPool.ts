@@ -22,7 +22,7 @@ export type { PooledContext, PoolStats };
 // ---------------------------------------------------------------------------
 
 /** State of a single context slot managed by the pool. */
-type ContextState = "idle" | "busy" | "failed";
+type ContextState = "idle" | "busy" | "failed" | "replacing";
 
 interface ManagedContext {
   contextId: string;
@@ -132,15 +132,56 @@ export class BrowserPool {
       return;
     }
 
-    // If there are waiters, hand off immediately
-    const waiter = this.waitQueue.shift();
-    if (waiter) {
-      // Keep state as busy and hand off to the next caller
-      waiter.resolve({ contextId: managed.contextId, adapterId: managed.adapterId });
+    // Approach B: discard the used context and create a fresh one.
+    // This guarantees complete state isolation (cookies, IndexedDB, Service
+    // Workers) at the cost of one newContext() call per test.
+    managed.state = "replacing";
+    void this._replaceContext(managed);
+  }
+
+  /**
+   * Close the used context and open a brand-new one in its slot.
+   * Fires and forgets from release() so callers are not blocked.
+   */
+  private async _replaceContext(managed: ManagedContext): Promise<void> {
+    if (this.closed) return;
+
+    // Find the owning process
+    const proc = this.processes.find((p) => p.adapterId === managed.adapterId);
+    if (!proc) {
+      this._drainQueue();
       return;
     }
 
-    managed.state = "idle";
+    // Close the old context (best-effort — ignore errors)
+    try {
+      await proc.adapter.closeContext(managed.contextId);
+    } catch {
+      // ignore
+    }
+
+    // If the pool was closed while we were working, stop here
+    if (this.closed) return;
+
+    // Open a replacement context in the same slot
+    try {
+      const newContextId = await proc.adapter.newContext();
+      managed.contextId = newContextId;
+      managed.adapterId = proc.adapterId;
+
+      // Hand off immediately if a waiter is queued, otherwise mark idle
+      const waiter = this.waitQueue.shift();
+      if (waiter) {
+        managed.state = "busy";
+        waiter.resolve({ contextId: managed.contextId, adapterId: managed.adapterId });
+      } else {
+        managed.state = "idle";
+      }
+    } catch {
+      // Context creation failed — mark the slot as failed and try to unblock waiters
+      managed.state = "failed";
+      this._drainQueue();
+    }
   }
 
   // -------------------------------------------------------------------------
@@ -175,7 +216,7 @@ export class BrowserPool {
     for (const proc of this.processes) {
       for (const ctx of proc.contexts) {
         totalContexts++;
-        if (ctx.state === "busy") busy++;
+        if (ctx.state === "busy" || ctx.state === "replacing") busy++;
         else if (ctx.state === "idle") idle++;
         // "failed" contexts are not counted as idle/busy
       }

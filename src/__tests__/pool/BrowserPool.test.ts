@@ -141,6 +141,11 @@ describe("AC-2: acquire() / release()", () => {
     expect(pool.stats().idle).toBe(1);
 
     pool.release(ctx);
+    // Approach B: immediately after release the context is "replacing" (counted as busy)
+    expect(pool.stats().busy).toBe(1);
+
+    // After replacement completes, it becomes idle again
+    await new Promise<void>((r) => setTimeout(r, 50));
     expect(pool.stats().busy).toBe(0);
     expect(pool.stats().idle).toBe(2);
 
@@ -165,11 +170,12 @@ describe("AC-2: acquire() / release()", () => {
     await new Promise((r) => setTimeout(r, 10));
     expect(resolved).toBe(false);
 
-    // Release ctx1 → pending acquire resolves
+    // Release ctx1 → pending acquire resolves with a fresh context (Approach B)
     pool.release(ctx1);
     const ctx2 = await pendingAcquire;
     expect(resolved).toBe(true);
-    expect(ctx2.contextId).toBe(ctx1.contextId);
+    // Approach B: waiter gets a NEW contextId (old one was closed and replaced)
+    expect(ctx2.contextId).not.toBe(ctx1.contextId);
 
     pool.release(ctx2);
     await pool.close();
@@ -182,6 +188,8 @@ describe("AC-2: acquire() / release()", () => {
     expect(typeof ctx.contextId).toBe("string");
     expect(typeof ctx.adapterId).toBe("string");
     pool.release(ctx);
+    // Wait for async context replacement (Approach B) before close
+    await new Promise<void>((r) => setTimeout(r, 50));
     await pool.close();
   });
 
@@ -333,7 +341,8 @@ describe("B-3 / GAP-2: release() with stale adapterId drains waitQueue", () => {
 
     const acquired = await pendingAcquire;
     expect(waiterResolved).toBe(true);
-    expect(acquired.contextId).toBe(staleToken.contextId);
+    // Approach B: waiter gets a fresh context, not the same stale one
+    expect(acquired.contextId).not.toBe(staleToken.contextId);
 
     pool.release(acquired);
     await pool.close();
@@ -478,4 +487,79 @@ describe("AC-6: concurrency stress (mocked, no real Chromium)", () => {
 
     await pool.close();
   }, 30_000);
+});
+
+// ---------------------------------------------------------------------------
+// Approach B: context replacement on release (test isolation guarantee)
+// ---------------------------------------------------------------------------
+
+describe("Context isolation (Approach B: replace context on release)", () => {
+  it("release() calls closeContext on the used context", async () => {
+    const pool = new BrowserPool();
+    await pool.init({ maxProcesses: 1, maxContextsPerProcess: 1 });
+    const ctx = await pool.acquire();
+    const usedContextId = ctx.contextId;
+
+    const adapter = createdAdapters[createdAdapters.length - 1]!;
+    pool.release(ctx);
+
+    // Wait for the async replacement to complete
+    await new Promise<void>((r) => setTimeout(r, 50));
+
+    expect(adapter.closeContext).toHaveBeenCalledWith(usedContextId);
+    await pool.close();
+  });
+
+  it("release() creates a new context to replace the used one", async () => {
+    const pool = new BrowserPool();
+    await pool.init({ maxProcesses: 1, maxContextsPerProcess: 1 });
+    const ctx = await pool.acquire();
+
+    const adapter = createdAdapters[createdAdapters.length - 1]!;
+    const callsBefore = (adapter.newContext as ReturnType<typeof vi.fn>).mock.calls.length;
+
+    pool.release(ctx);
+    await new Promise<void>((r) => setTimeout(r, 50));
+
+    // One extra newContext() call for the replacement
+    expect((adapter.newContext as ReturnType<typeof vi.fn>).mock.calls.length).toBe(callsBefore + 1);
+    await pool.close();
+  });
+
+  it("next acquire() gets a fresh context id (not the same as previous test)", async () => {
+    const pool = new BrowserPool();
+    await pool.init({ maxProcesses: 1, maxContextsPerProcess: 1 });
+
+    const ctx1 = await pool.acquire();
+    const id1 = ctx1.contextId;
+    pool.release(ctx1);
+
+    // Wait for replacement to complete
+    await new Promise<void>((r) => setTimeout(r, 50));
+
+    const ctx2 = await pool.acquire();
+    const id2 = ctx2.contextId;
+    pool.release(ctx2);
+
+    expect(id2).not.toBe(id1);
+    await pool.close();
+  });
+
+  it("waiter receives the freshly-created context after replacement", async () => {
+    const pool = new BrowserPool();
+    await pool.init({ maxProcesses: 1, maxContextsPerProcess: 1 });
+
+    const ctx1 = await pool.acquire();
+
+    // Queue a waiter before releasing
+    const ctx2Promise = pool.acquire();
+    pool.release(ctx1);
+
+    const ctx2 = await ctx2Promise;
+
+    // The waiter should get the NEW context id, not ctx1's id
+    expect(ctx2.contextId).not.toBe(ctx1.contextId);
+    pool.release(ctx2);
+    await pool.close();
+  });
 });
