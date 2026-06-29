@@ -35,7 +35,7 @@ test('my test', async (page) => { ... });
 | `test(name, fn)` | Supported | `fn` receives `Page` directly (not a fixtures object) |
 | `test.describe(name, fn)` | Supported | |
 | `test.skip(name, fn)` | Supported | Test is silently omitted |
-| `test.only` | Supported | Runs only the matched test(s) in the file |
+| `test.only` | Supported | Runs only `.only` tests across **all spec files in the same run** (cross-file scope) |
 | `test.describe.only(name, fn)` | Supported | Runs only the matched describe block(s) |
 | `test.describe.skip(name, fn)` | Supported | Skips the matched describe block(s) |
 | `test.beforeEach` / `test.afterEach` | Not supported | — |
