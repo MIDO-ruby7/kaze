@@ -241,7 +241,13 @@ export async function downloadAndInstall(version: string, downloadUrl: string): 
 
     // Make the chromium binary executable on unix
     if (process.platform !== "win32") {
-      const bins = ["chrome", "chromium", "chrome-linux", "chrome-mac"];
+      const bins = [
+        "chrome",
+        "chromium",
+        "chrome-linux",
+        "chrome-mac",
+        "Google Chrome for Testing",
+      ];
       for (const bin of bins) {
         const binPath = findFile(installDir, bin);
         if (binPath) {

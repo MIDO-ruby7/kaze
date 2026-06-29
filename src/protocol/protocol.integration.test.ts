@@ -54,6 +54,21 @@ function resolveChromiumExecutable(installDir: string): string {
 }
 
 function findInstalledChromiumDir(): string | undefined {
+  // Prefer Playwright's Chromium (properly signed for macOS)
+  const playwrightCaches = [
+    path.join(os.homedir(), "Library", "Caches", "ms-playwright"),
+    path.join(os.homedir(), ".cache", "ms-playwright"),
+  ];
+  for (const cacheDir of playwrightCaches) {
+    if (!fs.existsSync(cacheDir)) continue;
+    const dirs = fs
+      .readdirSync(cacheDir, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && e.name.startsWith("chromium-"))
+      .map((e) => path.join(cacheDir, e.name))
+      .sort();
+    if (dirs.length > 0) return dirs[dirs.length - 1];
+  }
+  // Fall back to kaze's own downloaded Chromium
   const root = path.join(os.homedir(), ".kaze", "browsers");
   if (!fs.existsSync(root)) return undefined;
   const dirs = fs

@@ -14,7 +14,7 @@ import { describe, it, expect as vitestExpect } from "vitest";
 
 import { test, expect, collectTestCases } from "../src/index.js";
 import { BrowserPool } from "../src/pool/BrowserPool.js";
-import { createAdapter } from "../src/protocol/index.js";
+
 import { Scheduler } from "../src/scheduler/Scheduler.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -63,14 +63,13 @@ test.describe("basic fixture", () => {
 
 describe("examples/basic.spec.ts", () => {
   it.skipIf(!!process.env.KAZE_SKIP_E2E || !isChromiumInstalled())("runs kaze tests against the fixture page", async () => {
-    const adapter = createAdapter({ protocol: "cdp" });
     const pool = new BrowserPool();
 
     try {
       await pool.init({ maxProcesses: 1, maxContextsPerProcess: 1 });
 
       const scheduler = new Scheduler(pool);
-      const cases = collectTestCases(adapter);
+      const cases = collectTestCases(pool);
       scheduler.enqueue(cases);
 
       const results = await scheduler.run();

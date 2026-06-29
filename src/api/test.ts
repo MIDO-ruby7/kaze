@@ -12,6 +12,11 @@ import type { TestCase } from "../scheduler/types.js";
 import type { Page } from "./Page.js";
 import { createPage } from "./Page.js";
 
+/** Minimal interface so test.ts doesn't import BrowserPool directly (avoids circular deps). */
+interface AdapterResolver {
+  getAdapter(adapterId: string): ProtocolAdapter;
+}
+
 // ---------------------------------------------------------------------------
 // Internal registry
 // ---------------------------------------------------------------------------
@@ -87,12 +92,13 @@ export const test = testFn;
 
 /**
  * Convert all registered `test(...)` calls into Scheduler-compatible TestCase
- * objects.  The `adapter` is used to wrap each PooledContext in a Page.
+ * objects. The `pool` is used to resolve the correct ProtocolAdapter for each
+ * PooledContext (since the pool manages adapter instances internally).
  *
  * This clears the internal registry after conversion so tests are not
  * duplicated across multiple `collectTestCases()` calls.
  */
-export function collectTestCases(adapter: ProtocolAdapter): TestCase[] {
+export function collectTestCases(pool: AdapterResolver): TestCase[] {
   const pending = _registry.splice(0);
 
   return pending.map((p) => ({
@@ -100,12 +106,10 @@ export function collectTestCases(adapter: ProtocolAdapter): TestCase[] {
     name: p.name,
     timeout: p.timeout,
     fn: async (ctx: PooledContext): Promise<void> => {
+      const adapter = pool.getAdapter(ctx.adapterId);
       const page = createPage(adapter, ctx);
-      try {
-        await p.fn(page);
-      } finally {
-        await page.close();
-      }
+      // Note: do NOT call page.close() here — the pool manages context lifecycle
+      await p.fn(page);
     },
   }));
 }

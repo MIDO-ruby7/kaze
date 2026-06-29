@@ -77,6 +77,22 @@ function browsersDir(): string {
  * Throws if none found.
  */
 function findLatestInstalledChromiumDir(): string {
+  // 1. Prefer Playwright's Chromium cache (properly signed for macOS)
+  const playwrightCacheDirs = [
+    path.join(os.homedir(), "Library", "Caches", "ms-playwright"),
+    path.join(os.homedir(), ".cache", "ms-playwright"),
+  ];
+  for (const cacheDir of playwrightCacheDirs) {
+    if (!fs.existsSync(cacheDir)) continue;
+    const chromiumDirs = fs
+      .readdirSync(cacheDir, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && e.name.startsWith("chromium-"))
+      .map((e) => path.join(cacheDir, e.name))
+      .sort();
+    if (chromiumDirs.length > 0) return chromiumDirs[chromiumDirs.length - 1]!;
+  }
+
+  // 2. Fall back to kaze's own downloaded Chromium
   const root = browsersDir();
   if (!fs.existsSync(root)) {
     throw new Error(`No browsers installed under ${root}. Run installBrowser() first.`);
@@ -90,7 +106,6 @@ function findLatestInstalledChromiumDir(): string {
     throw new Error(`No chromium-* directories found in ${root}.`);
   }
 
-  // Sort lexicographically; last entry is the highest version
   dirs.sort();
   return dirs[dirs.length - 1]!;
 }
@@ -317,7 +332,17 @@ export class CdpAdapter implements ProtocolAdapter {
         "--headless=new",
         "--no-sandbox",
         "--disable-gpu",
+        "--disable-gpu-sandbox",
         "--disable-dev-shm-usage",
+        "--disable-crash-reporter",
+        "--disable-breakpad",
+        "--use-angle=swiftshader",
+        "--disable-software-rasterizer",
+        "--disable-background-networking",
+        "--disable-extensions",
+        "--disable-sync",
+        "--password-store=basic",
+        "--use-mock-keychain",
         `--user-data-dir=${this.tmpDir}`,
       ],
       { stdio: "ignore" },
@@ -339,20 +364,8 @@ export class CdpAdapter implements ProtocolAdapter {
       { url: "about:blank" },
     );
 
-    // Open a dedicated session for this target
-    const { sessionId } = await this.browserSession.send<{ sessionId: string }>(
-      "Target.attachToTarget",
-      { targetId, flatten: false },
-    );
-    void sessionId; // We open a direct WS connection instead
-
-    const targets = await httpGetJson<TargetInfo[]>(
-      `http://127.0.0.1:${this.options.port}/json/list`,
-    );
-    const target = targets.find((t) => t.targetId === targetId);
-    if (!target) throw new Error(`Target ${targetId} not found in /json/list`);
-
-    const wsUrl = `ws://127.0.0.1:${this.options.port}/devtools/page/${targetId}`;
+    // Wait for the target to appear in /json/list (timing varies across Chrome versions)
+    const wsUrl = await this._waitForTarget(targetId);
     const session = await CdpSession.connect(wsUrl);
 
     // Enable the domains we need
@@ -376,6 +389,23 @@ export class CdpAdapter implements ProtocolAdapter {
     if (this.browserSession) {
       await this.browserSession.send("Target.closeTarget", { targetId });
     }
+  }
+
+  /** Wait for a target to be ready, then return its direct WebSocket URL. */
+  private async _waitForTarget(targetId: string, timeoutMs = 5000): Promise<string> {
+    const wsUrl = `ws://127.0.0.1:${this.options.port}/devtools/page/${targetId}`;
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      // Verify via CDP Target.getTargets (more reliable than /json/list in newer Chrome)
+      const result = await this.browserSession!.send<{ targetInfos: TargetInfo[] }>(
+        "Target.getTargets",
+      );
+      if (result.targetInfos.some((t) => t.targetId === targetId)) {
+        return wsUrl;
+      }
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    throw new Error(`Target ${targetId} did not become ready within ${timeoutMs}ms`);
   }
 
   async navigate(contextId: ContextId, url: string): Promise<void> {

@@ -22,6 +22,12 @@ function makeAdapter(overrides: Partial<ProtocolAdapter> = {}): ProtocolAdapter 
   };
 }
 
+/** Mock pool that wraps a single adapter — satisfies the AdapterResolver interface. */
+function makePool(adapter?: ProtocolAdapter): { getAdapter: (id: string) => ProtocolAdapter } {
+  const a = adapter ?? makeAdapter();
+  return { getAdapter: () => a };
+}
+
 describe("test()", () => {
   beforeEach(() => {
     _resetRegistry();
@@ -29,17 +35,15 @@ describe("test()", () => {
 
   it("registers a test that is returned by collectTestCases", () => {
     test("my test", async (_page) => {});
-    const adapter = makeAdapter();
-    const cases = collectTestCases(adapter);
+    const cases = collectTestCases(makePool());
     expect(cases).toHaveLength(1);
     expect(cases[0]!.name).toBe("my test");
   });
 
   it("clears registry after collectTestCases", () => {
     test("once", async (_page) => {});
-    const adapter = makeAdapter();
-    const cases1 = collectTestCases(adapter);
-    const cases2 = collectTestCases(adapter);
+    const cases1 = collectTestCases(makePool());
+    const cases2 = collectTestCases(makePool());
     expect(cases1).toHaveLength(1);
     expect(cases2).toHaveLength(0);
   });
@@ -49,7 +53,7 @@ describe("test()", () => {
       test("test 1", async (_page) => {});
       test("test 2", async (_page) => {});
     });
-    const cases = collectTestCases(makeAdapter());
+    const cases = collectTestCases(makePool());
     expect(cases[0]!.name).toBe("Suite A > test 1");
     expect(cases[1]!.name).toBe("Suite A > test 2");
   });
@@ -60,7 +64,7 @@ describe("test()", () => {
         test("deep", async (_page) => {});
       });
     });
-    const cases = collectTestCases(makeAdapter());
+    const cases = collectTestCases(makePool());
     expect(cases[0]!.name).toBe("Outer > Inner > deep");
   });
 
@@ -70,8 +74,7 @@ describe("test()", () => {
       received = page;
     });
 
-    const adapter = makeAdapter();
-    const cases = collectTestCases(adapter);
+    const cases = collectTestCases(makePool());
     expect(cases).toHaveLength(1);
 
     const ctx: PooledContext = { contextId: "ctx-1", adapterId: "a-1" };
@@ -82,38 +85,37 @@ describe("test()", () => {
 
   it("test.skip does not register the test", () => {
     test.skip("skipped", async (_page) => {});
-    const cases = collectTestCases(makeAdapter());
+    const cases = collectTestCases(makePool());
     expect(cases).toHaveLength(0);
   });
 
   it("assigns unique ids to each test", () => {
     test("a", async (_page) => {});
     test("b", async (_page) => {});
-    const cases = collectTestCases(makeAdapter());
+    const cases = collectTestCases(makePool());
     expect(cases[0]!.id).not.toBe(cases[1]!.id);
   });
 
-  it("GAP-1: page.close() is called in finally even when test throws", async () => {
+  it("GAP-1: error in test fn propagates (pool manages context lifecycle)", async () => {
     test("throws", async (_page) => {
       throw new Error("test error");
     });
 
-    const adapter = makeAdapter();
-    const cases = collectTestCases(adapter);
+    const cases = collectTestCases(makePool());
     const ctx: PooledContext = { contextId: "ctx-1", adapterId: "a-1" };
 
     await expect(cases[0]!.fn(ctx)).rejects.toThrow("test error");
-    expect(adapter.closeContext).toHaveBeenCalledWith("ctx-1");
   });
 
-  it("GAP-1: page.close() is called after a successful test", async () => {
+  it("GAP-1: test fn runs without calling closeContext (pool manages lifecycle)", async () => {
     test("success", async (_page) => {});
 
     const adapter = makeAdapter();
-    const cases = collectTestCases(adapter);
+    const cases = collectTestCases(makePool(adapter));
     const ctx: PooledContext = { contextId: "ctx-1", adapterId: "a-1" };
 
     await cases[0]!.fn(ctx);
-    expect(adapter.closeContext).toHaveBeenCalledWith("ctx-1");
+    // pool manages context lifecycle — closeContext is NOT called by collectTestCases
+    expect(adapter.closeContext).not.toHaveBeenCalled();
   });
 });

@@ -190,6 +190,13 @@ export class BrowserPool {
     };
   }
 
+  /** Return the ProtocolAdapter that owns the given adapterId. */
+  getAdapter(adapterId: string): ProtocolAdapter {
+    const proc = this.processes.find((p) => p.adapterId === adapterId);
+    if (!proc) throw new Error(`No process found for adapterId: ${adapterId}`);
+    return proc.adapter;
+  }
+
   // -------------------------------------------------------------------------
   // Private helpers
   // -------------------------------------------------------------------------
