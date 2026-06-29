@@ -2,18 +2,22 @@
  * index.ts — CLI entry point for `kaze`.
  *
  * Usage:
- *   kaze test                         # detect **\/*.{spec,test}.{ts,js}
- *   kaze test src/features/           # directory
- *   kaze test "**\/*.spec.ts"         # glob
- *   kaze test --workers=50            # parallel workers (or KAZE_WORKERS env)
- *   kaze test --timeout=30000         # per-test timeout ms
- *   kaze test --reporter=dot          # dot | verbose (default: verbose)
+ *   kaze                              # detect **\/*.{spec,test}.{ts,js}
+ *   kaze src/features/                # directory
+ *   kaze "**\/*.spec.ts"              # glob
+ *   kaze --workers=50                 # parallel workers (or KAZE_WORKERS env)
+ *   kaze --timeout=30000              # per-test timeout ms
+ *   kaze --reporter=dot               # dot | verbose (default: verbose)
+ *   kaze --watch                      # watch mode
+ *   kaze test                         # backward compat: "test" subcommand is stripped
+ *   kaze test src/features/           # backward compat
  */
 
 import { parseArgs } from "node:util";
 
 import { run } from "./runner.js";
 import { report } from "./reporter.js";
+import { watch } from "./watcher.js";
 import type { ReporterMode } from "./reporter.js";
 
 // ---------------------------------------------------------------------------
@@ -26,6 +30,7 @@ const { values, positionals } = parseArgs({
     workers: { type: "string" },
     timeout: { type: "string" },
     reporter: { type: "string" },
+    watch: { type: "boolean", short: "w", default: false },
     help: { type: "boolean", short: "h", default: false },
   },
   allowPositionals: true,
@@ -37,38 +42,39 @@ if (values.help) {
 kaze — E2E test runner
 
 Usage:
-  kaze test [pattern] [options]
+  kaze [pattern...] [options]
+  kaze test [pattern...] [options]   # "test" subcommand (backward compat)
 
 Options:
   --workers=N       Max parallel workers (or KAZE_WORKERS env var)
   --timeout=N       Per-test timeout in ms (default: 30000)
   --reporter=MODE   Output mode: verbose (default) | dot
+  --watch, -w       Watch for file changes and re-run tests
   -h, --help        Show this help
 
 Examples:
-  kaze test
-  kaze test src/features/
-  kaze test "**/*.spec.ts"
-  kaze test --workers=4 --reporter=dot
+  kaze
+  kaze src/features/
+  kaze "**/*.spec.ts"
+  kaze --workers=4 --reporter=dot
+  kaze --watch
+  kaze test                          # backward compat
+  kaze test src/features/            # backward compat
 `);
   process.exit(0);
 }
 
 // ---------------------------------------------------------------------------
-// Subcommand detection
+// Positional processing: strip leading "test" for backward compat
 // ---------------------------------------------------------------------------
 
-// `kaze test [pattern]` or `kaze [pattern]` (test is optional)
-let subcommand = positionals[0];
-let patternArg: string | undefined;
-
-if (subcommand === "test") {
-  patternArg = positionals[1];
-} else {
-  // treat it as a pattern if no "test" subcommand given
-  patternArg = subcommand;
-  subcommand = "test";
+let args = positionals.slice();
+if (args[0] === "test") {
+  args = args.slice(1); // remove "test" subcommand — backward compat
 }
+
+// Remaining positionals are glob patterns / directories / file paths
+const patterns = args; // may be empty → detect all spec files
 
 // ---------------------------------------------------------------------------
 // Option extraction
@@ -80,6 +86,7 @@ const timeout =
   typeof values.timeout === "string" ? parseInt(values.timeout, 10) : undefined;
 const reporterMode: ReporterMode =
   values.reporter === "dot" ? "dot" : "verbose";
+const watchMode = values.watch === true;
 
 // ---------------------------------------------------------------------------
 // Run
@@ -87,10 +94,23 @@ const reporterMode: ReporterMode =
 
 (async () => {
   try {
+    const runWorkers = workers && !isNaN(workers) ? workers : undefined;
+    const runTimeout = timeout && !isNaN(timeout) ? timeout : undefined;
+
+    if (watchMode) {
+      await watch({
+        patterns,
+        workers: runWorkers,
+        timeout: runTimeout,
+        reporterMode,
+      });
+      return;
+    }
+
     const results = await run({
-      pattern: patternArg,
-      workers: workers && !isNaN(workers) ? workers : undefined,
-      timeout: timeout && !isNaN(timeout) ? timeout : undefined,
+      patterns: patterns.length > 0 ? patterns : undefined,
+      workers: runWorkers,
+      timeout: runTimeout,
     });
 
     const summary = report(results, reporterMode);
