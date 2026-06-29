@@ -21,8 +21,6 @@ import type { TestCase, TestResult } from "./types.js";
 // ---------------------------------------------------------------------------
 
 const DEFAULT_TIMEOUT_MS = 30_000;
-const LAST_RUN_DIR = path.join(process.cwd(), ".kaze");
-const LAST_RUN_PATH = path.join(LAST_RUN_DIR, "last-run.json");
 const SCREENSHOTS_DIR = path.join(process.cwd(), ".kaze", "screenshots");
 
 // ---------------------------------------------------------------------------
@@ -40,6 +38,8 @@ interface LastRunData {
 export interface SchedulerOptions {
   /** Whether to capture screenshots on failure/timeout. Defaults to true. */
   screenshot?: boolean;
+  /** Override the path to last-run.json (useful for test isolation). */
+  lastRunPath?: string;
 }
 
 export class Scheduler {
@@ -47,12 +47,22 @@ export class Scheduler {
   /** True while run() is executing — prevents concurrent run() calls. */
   private _running = false;
   private readonly screenshotEnabled: boolean;
+  private readonly options: SchedulerOptions;
 
   constructor(
     private readonly pool: BrowserPool,
     options: SchedulerOptions = {},
   ) {
+    this.options = options;
     this.screenshotEnabled = options.screenshot !== false;
+  }
+
+  private get _lastRunPath(): string {
+    return this.options.lastRunPath ?? path.join(process.cwd(), ".kaze", "last-run.json");
+  }
+
+  private get _lastRunDir(): string {
+    return path.dirname(this._lastRunPath);
   }
 
   // -------------------------------------------------------------------------
@@ -247,7 +257,7 @@ export class Scheduler {
 
   private async _readLastRunFailedIds(): Promise<Set<string>> {
     try {
-      const raw = await fs.readFile(LAST_RUN_PATH, "utf-8");
+      const raw = await fs.readFile(this._lastRunPath, "utf-8");
       const data = JSON.parse(raw) as LastRunData;
       return new Set(data.failedIds ?? []);
     } catch {
@@ -265,8 +275,8 @@ export class Scheduler {
 
       const data: LastRunData = { failedIds };
 
-      await fs.mkdir(LAST_RUN_DIR, { recursive: true });
-      await fs.writeFile(LAST_RUN_PATH, JSON.stringify(data, null, 2), "utf-8");
+      await fs.mkdir(this._lastRunDir, { recursive: true });
+      await fs.writeFile(this._lastRunPath, JSON.stringify(data, null, 2), "utf-8");
     } catch (err: unknown) {
       console.warn(
         "[Scheduler] Failed to write last-run.json:",
