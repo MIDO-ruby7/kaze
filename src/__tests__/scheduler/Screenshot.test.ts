@@ -2,10 +2,12 @@
  * Unit tests for screenshot capture logic (AC-7).
  *
  * AC-1: screenshot is taken on failed and timedOut tests
- * AC-2: saved path follows .kaze/screenshots/<sanitized-name>-<timestamp>.png
+ * AC-2: saved path follows .kaze/screenshots/<sanitized-name>-<testId>-<timestamp>.png
  * AC-4: screenshot disabled when screenshotEnabled = false
  * AC-5: screenshot failure does not affect test result
  * AC-6: screenshot is PNG (adapter called with format: "png" via Page.captureScreenshot)
+ * AC-9: filename includes testId for uniqueness in parallel execution
+ * AC-10: filename length is capped (200 chars for sanitized name, fallback to "unnamed")
  */
 
 import * as fs from "node:fs/promises";
@@ -155,10 +157,10 @@ describe("Screenshot capture", () => {
   });
 
   // -------------------------------------------------------------------------
-  // AC-2: saved path follows naming convention
+  // AC-2 / AC-9: saved path follows naming convention including testId
   // -------------------------------------------------------------------------
-  describe("AC-2: screenshot path naming", () => {
-    it("saves screenshot to .kaze/screenshots/<sanitized-name>-<timestamp>.png", async () => {
+  describe("AC-2 / AC-9: screenshot path naming", () => {
+    it("saves screenshot to .kaze/screenshots/<sanitized-name>-<testId>-<timestamp>.png", async () => {
       const pngData = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
       const { pool } = makeMockPoolWithScreenshot(() => Promise.resolve(pngData));
       const scheduler = new Scheduler(pool, { screenshot: true });
@@ -182,9 +184,9 @@ describe("Screenshot capture", () => {
       // Must be inside .kaze/screenshots/
       expect(p).toContain(path.join(".kaze", "screenshots"));
 
-      // Filename must use sanitized test name (spaces → dashes)
+      // Filename must use sanitized test name + testId (spaces → dashes)
       const filename = path.basename(p);
-      expect(filename).toMatch(/^My-test-case-\d+\.png$/);
+      expect(filename).toMatch(/^My-test-case-naming-1-\d+\.png$/);
     });
 
     it("replaces special characters in test name with dashes", async () => {
@@ -206,7 +208,35 @@ describe("Screenshot capture", () => {
       const filename = path.basename(result.screenshotPath!);
       // Special chars replaced with -
       expect(filename).not.toMatch(/[/:<>]/);
-      expect(filename).toMatch(/^test--foo-bar--baz--\d+\.png$/);
+      expect(filename).toMatch(/^test--foo-bar--baz--special-1-\d+\.png$/);
+    });
+
+    it("AC-9: two tests with same name but different ids produce different filenames", async () => {
+      const pngData = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+      const { pool } = makeMockPoolWithScreenshot(() => Promise.resolve(pngData));
+      const scheduler = new Scheduler(pool, { screenshot: true });
+
+      scheduler.enqueue([
+        {
+          id: "dup-1",
+          name: "Duplicate name",
+          fn: async () => { throw new Error("fail"); },
+        },
+        {
+          id: "dup-2",
+          name: "Duplicate name",
+          fn: async () => { throw new Error("fail"); },
+        },
+      ]);
+
+      const results = await scheduler.run();
+      const paths = results
+        .map((r) => r.screenshotPath)
+        .filter((p): p is string => p !== undefined);
+
+      expect(paths).toHaveLength(2);
+      // The two paths must be different (testId makes them unique)
+      expect(paths[0]).not.toBe(paths[1]);
     });
 
     it("actually writes the PNG file to disk", async () => {
@@ -227,6 +257,77 @@ describe("Screenshot capture", () => {
       expect(result.screenshotPath).toBeDefined();
       const diskContent = await fs.readFile(result.screenshotPath!);
       expect(diskContent).toEqual(pngData);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // AC-10: filename edge cases — empty name and long name
+  // -------------------------------------------------------------------------
+  describe("AC-10: filename edge cases", () => {
+    it("uses 'unnamed' fallback when test name is empty string", async () => {
+      const pngData = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+      const { pool } = makeMockPoolWithScreenshot(() => Promise.resolve(pngData));
+      const scheduler = new Scheduler(pool, { screenshot: true });
+
+      scheduler.enqueue([
+        {
+          id: "empty-name-1",
+          name: "",
+          fn: async () => { throw new Error("fail"); },
+        },
+      ]);
+
+      const [result] = await scheduler.run();
+
+      expect(result.screenshotPath).toBeDefined();
+      const filename = path.basename(result.screenshotPath!);
+      expect(filename).toMatch(/^unnamed-empty-name-1-\d+\.png$/);
+    });
+
+    it("uses 'unnamed' fallback when test name is all non-ASCII (converts to all dashes)", async () => {
+      const pngData = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+      const { pool } = makeMockPoolWithScreenshot(() => Promise.resolve(pngData));
+      const scheduler = new Scheduler(pool, { screenshot: true });
+
+      scheduler.enqueue([
+        {
+          id: "nonasc-1",
+          name: "日本語テスト名",
+          fn: async () => { throw new Error("fail"); },
+        },
+      ]);
+
+      const [result] = await scheduler.run();
+
+      expect(result.screenshotPath).toBeDefined();
+      const filename = path.basename(result.screenshotPath!);
+      expect(filename).toMatch(/^unnamed-nonasc-1-\d+\.png$/);
+    });
+
+    it("truncates sanitized name to 200 chars to avoid ENAMETOOLONG", async () => {
+      const longName = "a".repeat(300);
+      const pngData = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+      const { pool } = makeMockPoolWithScreenshot(() => Promise.resolve(pngData));
+      const scheduler = new Scheduler(pool, { screenshot: true });
+
+      scheduler.enqueue([
+        {
+          id: "long-1",
+          name: longName,
+          fn: async () => { throw new Error("fail"); },
+        },
+      ]);
+
+      const [result] = await scheduler.run();
+
+      expect(result.screenshotPath).toBeDefined();
+      const filename = path.basename(result.screenshotPath!);
+      // sanitized name part must be at most 200 chars
+      const namePartMatch = filename.match(/^([a-zA-Z0-9_\-.]+)-long-1-\d+\.png$/);
+      expect(namePartMatch).not.toBeNull();
+      expect(namePartMatch![1].length).toBeLessThanOrEqual(200);
+      // overall filename must be well under 255 bytes
+      expect(Buffer.byteLength(filename)).toBeLessThan(255);
     });
   });
 

@@ -163,7 +163,7 @@ export class Scheduler {
       // AC-1/AC-5/AC-6: best-effort screenshot on failure or timeout
       let screenshotPath: string | undefined;
       if (this.screenshotEnabled) {
-        screenshotPath = await this._captureScreenshot(test.name, ctx.adapterId, ctx.contextId);
+        screenshotPath = await this._captureScreenshot(test.name, test.id, ctx.adapterId, ctx.contextId);
       }
 
       return {
@@ -185,11 +185,12 @@ export class Scheduler {
   // -------------------------------------------------------------------------
 
   /**
-   * Capture a PNG screenshot and save it to .kaze/screenshots/<sanitized-name>-<timestamp>.png.
+   * Capture a PNG screenshot and save it to .kaze/screenshots/<sanitized-name>-<testId>-<timestamp>.png.
    * Returns the saved path, or undefined if capture fails (best-effort, AC-5).
    */
   private async _captureScreenshot(
     testName: string,
+    testId: string,
     adapterId: string,
     contextId: string,
   ): Promise<string | undefined> {
@@ -200,9 +201,15 @@ export class Scheduler {
       const pngBuffer = await adapter.screenshot(contextId);
 
       // AC-2: sanitize test name (replace characters not safe for filenames with '-')
-      const safeName = testName.replace(/[^a-zA-Z0-9_\-.]/g, "-");
+      // AC-9/AC-10: enforce uniqueness with testId and cap length to avoid ENAMETOOLONG
+      let safeName = testName
+        .replace(/[^a-zA-Z0-9_\-.]/g, "-")
+        .slice(0, 200);
+      if (!safeName || safeName.replace(/-/g, "").length === 0) {
+        safeName = "unnamed";
+      }
       const timestamp = Date.now();
-      const filename = `${safeName}-${timestamp}.png`;
+      const filename = `${safeName}-${testId}-${timestamp}.png`;
       const screenshotsDir = SCREENSHOTS_DIR;
 
       await fs.mkdir(screenshotsDir, { recursive: true });
