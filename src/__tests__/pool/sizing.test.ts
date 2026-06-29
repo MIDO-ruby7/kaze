@@ -47,32 +47,31 @@ describe("computePoolSizing", () => {
     expect(result.contextsPerProcess).toBeGreaterThanOrEqual(5);
   });
 
-  // AC-4 case 3: high RAM (64 GB), 8 cores
-  it("AC-4 high-RAM: 64 GB / 8 cores — processCount capped by CPU cores", () => {
+  // AC-4 case 3: high RAM (64 GB), 8 cores — scales to many processes
+  it("AC-4 high-RAM: 64 GB / 8 cores — processCount scales with RAM", () => {
     const resources = makeResources(64 * 1024, 8);
     const result = computePoolSizing(resources);
-    // processCount must not exceed cpuCount
-    expect(result.processCount).toBeLessThanOrEqual(8);
-    expect(result.processCount).toBeGreaterThanOrEqual(1);
-    expect(result.contextsPerProcess).toBeGreaterThanOrEqual(1);
+    // 64GB / (350 + 10×50) MB per process = 74 processes
+    expect(result.processCount).toBeGreaterThanOrEqual(10);
+    expect(result.contextsPerProcess).toBe(10);
+    expect(result.totalParallel).toBeGreaterThanOrEqual(100);
   });
 
-  // AC-4 case 4: single core
-  it("AC-4 single-core: processCount is 1 regardless of RAM", () => {
+  // AC-4 case 4: single core, moderate RAM
+  it("AC-4 single-core: still uses RAM budget for processCount", () => {
     const resources = makeResources(8 * 1024, 1);
     const result = computePoolSizing(resources);
-    expect(result.processCount).toBe(1);
+    // 8GB / 850MB per process = 9 processes
+    expect(result.processCount).toBeGreaterThanOrEqual(1);
     expect(result.contextsPerProcess).toBeGreaterThanOrEqual(1);
   });
 
-  // AC-4 case 5: many cores (16), high RAM
-  it("AC-4 multi-core: 64 GB / 16 cores — processCount capped at 2", () => {
+  // AC-4 case 5: many cores (16), high RAM — large CI machine
+  it("AC-4 multi-core: 64 GB / 16 cores — scales to many processes", () => {
     const resources = makeResources(64 * 1024, 16);
     const result = computePoolSizing(resources);
-    // Capped at 2 processes for stability; parallelism comes from contexts
-    expect(result.processCount).toBeGreaterThanOrEqual(1);
-    expect(result.processCount).toBeLessThanOrEqual(2);
-    expect(result.contextsPerProcess).toBeGreaterThanOrEqual(5);
+    expect(result.processCount).toBeGreaterThanOrEqual(10);
+    expect(result.totalParallel).toBeGreaterThanOrEqual(100);
   });
 
   // AC-3: maxProcesses override

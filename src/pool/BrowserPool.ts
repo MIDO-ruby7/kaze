@@ -47,6 +47,13 @@ interface ManagedProcess {
 export interface BrowserPoolInitOptions {
   maxProcesses?: number;
   maxContextsPerProcess?: number;
+  /**
+   * Target total parallel slots.
+   * kaze derives processCount = ceil(workers / 10).
+   * Can also be set via KAZE_WORKERS environment variable.
+   * Example: workers=300 → 30 processes × 10 contexts = 300 parallel.
+   */
+  workers?: number;
   /** Base CDP port. Each process uses (basePort + index). Defaults to 9300. */
   basePort?: number;
   /** Executable path override (useful for tests). */
@@ -86,6 +93,7 @@ export class BrowserPool {
     const sizing = computePoolSizing(resources, {
       maxProcesses: opts?.maxProcesses,
       maxContextsPerProcess: opts?.maxContextsPerProcess,
+      workers: opts?.workers,
     });
 
     const basePort = opts?.basePort ?? 9300;

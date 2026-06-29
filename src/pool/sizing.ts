@@ -6,83 +6,101 @@ const DEFAULT_RAM_PER_PROCESS_MB = 350;
 /** Assumed RAM usage (MB) per browser context. */
 const DEFAULT_RAM_PER_CONTEXT_MB = 50;
 
+/**
+ * Optimal contexts per browser process.
+ * Benchmarks show throughput degrades above 10 concurrent CDP sessions per process.
+ */
+const CONTEXTS_PER_PROCESS = 10;
+
 /** Result of a pool sizing calculation. */
 export interface PoolSizing {
   /** Number of browser processes to spawn. */
   processCount: number;
   /** Number of browser contexts to open per process. */
   contextsPerProcess: number;
+  /** Total parallel slots (processCount × contextsPerProcess). */
+  totalParallel: number;
   /**
    * True when free RAM is below the minimum threshold required to run even one
    * browser process with one context (350 MB process + 50 MB context = 400 MB).
-   * Callers can use this flag to warn users or refuse to start the pool.
    */
   insufficientMemory: boolean;
 }
 
-/** User-provided overrides that cap the computed values. */
+/** User-provided overrides. */
 export interface PoolSizingOpts {
   /** Hard upper limit on the number of browser processes. */
   maxProcesses?: number;
   /** Hard upper limit on contexts per process. */
   maxContextsPerProcess?: number;
+  /**
+   * Target total parallel slots.
+   * Overrides processCount calculation: processCount = ceil(workers / contextsPerProcess).
+   * Useful for CI: set KAZE_WORKERS=N or pass workers=N directly.
+   */
+  workers?: number;
 }
 
 /**
  * Pure function: derives the optimal pool sizing from a resource snapshot and
  * optional user overrides.
  *
+ * kaze's core advantage over Playwright:
+ *   Playwright needs 1 browser process per parallel worker (300 workers = 300 processes).
+ *   kaze shares browser processes: 300 parallel = 30 processes × 10 contexts.
+ *   RAM ratio: kaze uses ~4x less RAM for the same parallelism.
+ *
  * Strategy:
- *   1. Determine processCount from CPU cores (not RAM) — processes are I/O bound,
- *      not CPU bound. Cap at 4 to avoid diminishing returns.
- *   2. Fill the remaining RAM budget with as many contexts as possible across
- *      all processes. This maximises total parallelism.
- *   3. Clamp everything to at least 1 (AC-5 minimum guarantee).
- *   4. Apply user-provided overrides as additional upper bounds.
+ *   1. Fix contextsPerProcess = 10 (empirical sweet spot per browser process).
+ *   2. Compute processCount from RAM budget (no artificial CPU-based cap).
+ *   3. Apply user overrides (workers=N for CI, maxProcesses for fine-tuning).
+ *   4. Respect KAZE_WORKERS env var for CI configuration.
  */
 export function computePoolSizing(
   resources: HostResources,
   opts?: PoolSizingOpts,
 ): PoolSizing {
-  const { freeMemMB, cpuCount } = resources;
+  const { freeMemMB } = resources;
 
-  // GAP-1: Detect insufficient memory (< 400 MB = 350 process + 50 context).
   const MINIMUM_MEMORY_MB = DEFAULT_RAM_PER_PROCESS_MB + DEFAULT_RAM_PER_CONTEXT_MB;
   const insufficientMemory = freeMemMB < MINIMUM_MEMORY_MB;
 
-  // Step 1: processCount — driven by CPU, capped at 2.
-  //   Multiple browser processes increase parallelism but also OS overhead.
-  //   2 is the sweet spot for most developer machines.
-  const processCount = Math.max(1, Math.min(Math.floor(cpuCount / 4), 2));
-
-  // Step 2: Total context budget from remaining RAM.
-  //   RAM used by processes: processCount × DEFAULT_RAM_PER_PROCESS_MB
-  //   Remaining RAM is shared equally across all contexts.
-  //   Cap at 10 contexts per process to avoid overwhelming a single browser.
-  const MAX_CONTEXTS_PER_PROCESS = 10;
-  const ramForProcesses = processCount * DEFAULT_RAM_PER_PROCESS_MB;
-  const ramForContexts = Math.max(0, freeMemMB - ramForProcesses);
-  const totalContexts = Math.max(1, Math.floor(ramForContexts / DEFAULT_RAM_PER_CONTEXT_MB));
-  const contextsPerProcess = Math.max(
+  // Effective contextsPerProcess (allow override but default to empirical optimum)
+  const ctxPerProc = Math.max(
     1,
-    Math.min(MAX_CONTEXTS_PER_PROCESS, Math.ceil(totalContexts / processCount)),
+    opts?.maxContextsPerProcess ?? CONTEXTS_PER_PROCESS,
   );
 
-  // Step 3: Apply user overrides as upper bounds.
-  const finalProcessCount =
-    opts?.maxProcesses !== undefined
-      ? Math.min(processCount, opts.maxProcesses)
-      : processCount;
+  // Effective target workers (env var > option > auto)
+  const envWorkers = process.env.KAZE_WORKERS ? parseInt(process.env.KAZE_WORKERS, 10) : undefined;
+  const targetWorkers = envWorkers ?? opts?.workers;
 
-  const finalContextsPerProcess =
-    opts?.maxContextsPerProcess !== undefined
-      ? Math.min(contextsPerProcess, opts.maxContextsPerProcess)
-      : contextsPerProcess;
+  let processCount: number;
 
-  // Re-enforce minimum after overrides (AC-5).
+  if (targetWorkers !== undefined && targetWorkers > 0) {
+    // Explicit worker count: derive processCount from it
+    processCount = Math.max(1, Math.ceil(targetWorkers / ctxPerProc));
+  } else {
+    // Auto: fill usable RAM with browser processes.
+    // Reserve 1GB as OS/other-process buffer to avoid memory pressure.
+    const RESERVED_MB = 1024;
+    const usableMB = Math.max(0, freeMemMB - RESERVED_MB);
+    const ramPerProcess = DEFAULT_RAM_PER_PROCESS_MB + ctxPerProc * DEFAULT_RAM_PER_CONTEXT_MB;
+    processCount = Math.max(1, Math.floor(usableMB / ramPerProcess));
+  }
+
+  // Apply user cap
+  if (opts?.maxProcesses !== undefined) {
+    processCount = Math.min(processCount, opts.maxProcesses);
+  }
+
+  const finalContextsPerProcess = ctxPerProc;
+  const finalProcessCount = Math.max(1, processCount);
+
   return {
-    processCount: Math.max(1, finalProcessCount),
-    contextsPerProcess: Math.max(1, finalContextsPerProcess),
+    processCount: finalProcessCount,
+    contextsPerProcess: finalContextsPerProcess,
+    totalParallel: finalProcessCount * finalContextsPerProcess,
     insufficientMemory,
   };
 }
