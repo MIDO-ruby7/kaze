@@ -47,8 +47,14 @@ export function report(results: TestResult[], mode: ReporterMode): ReportSummary
         console.log(`  ✓ ${r.name} (${r.durationMs}ms)`);
       } else if (r.status === "timedOut") {
         timedOut++;
-        console.log(`  T ${r.name} (timed out)`);
-        if (r.error) {
+        const attemptCount = r.attempts?.length ?? 1;
+        const retryLabel = attemptCount > 1 ? ` (failed after ${attemptCount} attempts)` : " (timed out)";
+        console.log(`  T ${r.name}${retryLabel}`);
+        if (r.attempts && r.attempts.length > 0) {
+          r.attempts.forEach((msg, i) => {
+            console.log(`    Attempt ${i + 1}: ${msg}`);
+          });
+        } else if (r.error) {
           console.log(`    └ ${r.error}`);
         }
         if (r.screenshotPath) {
@@ -56,8 +62,14 @@ export function report(results: TestResult[], mode: ReporterMode): ReportSummary
         }
       } else {
         failed++;
-        console.log(`  ✗ ${r.name}`);
-        if (r.error) {
+        const attemptCount = r.attempts?.length ?? 0;
+        const retryLabel = attemptCount > 1 ? ` (failed after ${attemptCount} attempts)` : "";
+        console.log(`  ✗ ${r.name}${retryLabel}`);
+        if (r.attempts && r.attempts.length > 0) {
+          r.attempts.forEach((msg, i) => {
+            console.log(`    Attempt ${i + 1}: ${msg}`);
+          });
+        } else if (r.error) {
           console.log(`    └ ${r.error}`);
         }
         if (r.screenshotPath) {

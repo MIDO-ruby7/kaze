@@ -41,6 +41,8 @@ export interface SchedulerOptions {
   lastRunPath?: string;
   /** Override the directory where screenshots are saved (useful for test isolation). */
   screenshotDir?: string;
+  /** Default number of retries for all tests. Per-test retries take precedence. */
+  retries?: number;
 }
 
 export class Scheduler {
@@ -104,7 +106,7 @@ export class Scheduler {
       // slots are busy, naturally capping concurrency at pool size).
       await Promise.all(
         orderedTests.map(async (test) => {
-          const result = await this._runOne(test);
+          const result = await this._runOne(test, this.options.retries);
           results.push(result);
         }),
       );
@@ -119,80 +121,107 @@ export class Scheduler {
   }
 
   // -------------------------------------------------------------------------
-  // Private: run a single test
+  // Private: run a single test (with retry support)
   // -------------------------------------------------------------------------
 
-  private async _runOne(test: TestCase): Promise<TestResult> {
+  private async _runOne(test: TestCase, retries?: number): Promise<TestResult> {
     const timeout = test.timeout ?? DEFAULT_TIMEOUT_MS;
     const start = Date.now();
 
-    // AC-2: acquire a context — blocks if pool is saturated
-    // GAP-2: If acquire() rejects (e.g. pool.close() called mid-run), record
-    // the test as failed and let the overall run() continue.
-    let ctx;
-    try {
-      ctx = await this.pool.acquire();
-    } catch (err: unknown) {
-      return {
-        id: test.id,
-        name: test.name,
-        status: "failed",
-        durationMs: Date.now() - start,
-        error: err instanceof Error ? err.message : String(err),
-      };
-    }
+    // Determine effective retry count: per-test retries > argument > 0
+    const effectiveRetries = test.retries ?? retries ?? 0;
+    const maxAttempts = effectiveRetries + 1;
+    const attempts: string[] = [];
+    let lastResult: TestResult | null = null;
 
-    try {
-      // B-2: Clear the timeout timer after Promise.race resolves or rejects to
-      // prevent timer leaks.
-      let timerId: ReturnType<typeof setTimeout> | undefined;
-      const timeoutPromise = new Promise<never>((_, reject) => {
-        timerId = setTimeout(
-          () => {
-            // AC-11: Cancel any in-flight Page polling (waitForSelector loops)
-            // before the context is returned to the pool, so the stale coroutine
-            // does not issue evaluate calls against the recycled context.
-            ctx._cancel?.();
-            reject(new TimeoutError(`Test "${test.name}" timed out after ${timeout}ms`));
-          },
-          timeout,
-        );
-      });
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      // AC-2: acquire a context — blocks if pool is saturated
+      // GAP-2: If acquire() rejects (e.g. pool.close() called mid-run), record
+      // the test as failed and let the overall run() continue.
+      // AC-4: Each retry acquires a fresh context (pool.release calls resetContext).
+      let ctx;
+      try {
+        ctx = await this.pool.acquire();
+      } catch (err: unknown) {
+        return {
+          id: test.id,
+          name: test.name,
+          status: "failed",
+          durationMs: Date.now() - start,
+          error: err instanceof Error ? err.message : String(err),
+          retries: effectiveRetries > 0 ? effectiveRetries : undefined,
+          attempts: attempts.length > 0 ? attempts : undefined,
+        };
+      }
 
       try {
-        // Race the test function against a timeout
-        await Promise.race([test.fn(ctx), timeoutPromise]);
+        // B-2: Clear the timeout timer after Promise.race resolves or rejects to
+        // prevent timer leaks.
+        let timerId: ReturnType<typeof setTimeout> | undefined;
+        const timeoutPromise = new Promise<never>((_, reject) => {
+          timerId = setTimeout(
+            () => {
+              // AC-11: Cancel any in-flight Page polling (waitForSelector loops)
+              // before the context is returned to the pool, so the stale coroutine
+              // does not issue evaluate calls against the recycled context.
+              ctx._cancel?.();
+              reject(new TimeoutError(`Test "${test.name}" timed out after ${timeout}ms`));
+            },
+            timeout,
+          );
+        });
+
+        try {
+          // Race the test function against a timeout
+          await Promise.race([test.fn(ctx), timeoutPromise]);
+        } finally {
+          clearTimeout(timerId);
+        }
+
+        // Test passed — return success result
+        lastResult = {
+          id: test.id,
+          name: test.name,
+          status: "passed",
+          durationMs: Date.now() - start,
+          retries: effectiveRetries > 0 ? effectiveRetries : undefined,
+          attempts: attempts.length > 0 ? attempts : undefined,
+        };
+        return lastResult;
+      } catch (err: unknown) {
+        const isTimeout = err instanceof TimeoutError;
+        const errMessage = err instanceof Error ? err.message : String(err);
+
+        // Record this attempt's error message (AC-3) — only when retries are configured
+        if (effectiveRetries > 0) {
+          attempts.push(errMessage);
+        }
+
+        // AC-1/AC-5/AC-6: best-effort screenshot on final failure or timeout
+        let screenshotPath: string | undefined;
+        const isFinalAttempt = attempt === maxAttempts;
+        if (isFinalAttempt && this.screenshotEnabled) {
+          screenshotPath = await this._captureScreenshot(test.name, test.id, ctx.adapterId, ctx.contextId);
+        }
+
+        lastResult = {
+          id: test.id,
+          name: test.name,
+          status: isTimeout ? "timedOut" : "failed",
+          durationMs: Date.now() - start,
+          error: errMessage,
+          screenshotPath,
+          retries: effectiveRetries > 0 ? effectiveRetries : undefined,
+          attempts: attempts.length > 0 ? [...attempts] : undefined,
+        };
       } finally {
-        clearTimeout(timerId);
+        // AC-2 & AC-6: always release so the context goes back to the pool
+        // release() calls resetContext — AC-4: fresh context for next attempt
+        this.pool.release(ctx);
       }
-
-      return {
-        id: test.id,
-        name: test.name,
-        status: "passed",
-        durationMs: Date.now() - start,
-      };
-    } catch (err: unknown) {
-      const isTimeout = err instanceof TimeoutError;
-
-      // AC-1/AC-5/AC-6: best-effort screenshot on failure or timeout
-      let screenshotPath: string | undefined;
-      if (this.screenshotEnabled) {
-        screenshotPath = await this._captureScreenshot(test.name, test.id, ctx.adapterId, ctx.contextId);
-      }
-
-      return {
-        id: test.id,
-        name: test.name,
-        status: isTimeout ? "timedOut" : "failed",
-        durationMs: Date.now() - start,
-        error: err instanceof Error ? err.message : String(err),
-        screenshotPath,
-      };
-    } finally {
-      // AC-2 & AC-6: always release so the context goes back to the pool
-      this.pool.release(ctx);
     }
+
+    return lastResult!;
   }
 
   // -------------------------------------------------------------------------
