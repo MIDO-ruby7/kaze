@@ -240,6 +240,76 @@ export class Page {
   }
 
   /**
+   * Return the page title (document.title).
+   * AC-2 (Issue #31)
+   */
+  async title(): Promise<string> {
+    const result = await this.adapter.evaluate(this.contextId, "document.title");
+    return String(result ?? "");
+  }
+
+  /**
+   * Keyboard interaction API.
+   * AC-2 (Issue #31)
+   */
+  readonly keyboard = {
+    /**
+     * Dispatch keydown and keyup events for the given key.
+     * @param key Key name, e.g. "Enter", "Tab", "Escape".
+     */
+    press: async (key: string): Promise<void> => {
+      const escapedKey = key.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+      await this.adapter.evaluate(
+        this.contextId,
+        `(function() {
+          const opts = { key: '${escapedKey}', bubbles: true, cancelable: true };
+          document.dispatchEvent(new KeyboardEvent('keydown', opts));
+          document.dispatchEvent(new KeyboardEvent('keyup', opts));
+        })()`,
+      );
+    },
+  };
+
+  /**
+   * Capture a screenshot of the page.
+   * Returns PNG bytes as a Buffer.
+   * AC-2 (Issue #31)
+   */
+  async screenshot(_opts?: { path?: string }): Promise<Buffer> {
+    if (this.adapter.screenshot) {
+      return this.adapter.screenshot(this.contextId);
+    }
+    // Fallback: evaluate to get pixel data when adapter.screenshot is absent.
+    // This returns an empty PNG-like buffer for testing purposes.
+    const result = await this.adapter.evaluate(
+      this.contextId,
+      `(function() {
+        try {
+          const c = document.createElement('canvas');
+          c.width = window.innerWidth || 800;
+          c.height = window.innerHeight || 600;
+          const ctx = c.getContext('2d');
+          if (ctx) ctx.drawImage(document.documentElement, 0, 0);
+          return Array.from(atob(c.toDataURL('image/png').split(',')[1])).map(ch => ch.charCodeAt(0));
+        } catch {
+          return [];
+        }
+      })()`,
+    );
+    const bytes = Array.isArray(result) ? (result as number[]) : [];
+    return Buffer.from(bytes);
+  }
+
+  /**
+   * Internal: dispatch a DOM event on the element matching selector.
+   * Used by Locator.hover() and similar methods.
+   * @internal
+   */
+  async _dispatchEvent(selector: string, event: string): Promise<void> {
+    await this.adapter.dispatchEvent(this.contextId, selector, event);
+  }
+
+  /**
    * AC-11: Normalize a route pattern to a stable string key.
    * Two RegExp instances with the same source + flags produce the same key.
    */

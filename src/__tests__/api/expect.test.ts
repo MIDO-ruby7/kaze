@@ -103,6 +103,147 @@ describe("expect(locator).toBeVisible", () => {
   });
 });
 
+describe("expect(page).toHaveTitle", () => {
+  let adapter: ProtocolAdapter;
+  let page: Page;
+
+  beforeEach(() => {
+    adapter = makeAdapter();
+    page = createPage(adapter, ctx);
+  });
+
+  it("resolves when title matches", async () => {
+    (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValue("My Page");
+    await vitestExpect(expect(page).toHaveTitle("My Page")).resolves.toBeUndefined();
+  });
+
+  it("resolves when title matches a RegExp", async () => {
+    (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValue("My Page Title");
+    await vitestExpect(expect(page).toHaveTitle(/My Page/)).resolves.toBeUndefined();
+  });
+
+  it("throws AssertionError on timeout", async () => {
+    (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValue("Other");
+    await vitestExpect(
+      expect(page).toHaveTitle("My Page", { timeout: 200 }),
+    ).rejects.toBeInstanceOf(AssertionError);
+  });
+});
+
+describe("expect(locator).toBeChecked", () => {
+  let adapter: ProtocolAdapter;
+  let page: Page;
+
+  beforeEach(() => {
+    adapter = makeAdapter();
+    page = createPage(adapter, ctx);
+  });
+
+  it("resolves when element is checked", async () => {
+    (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+    const locator = page.locator("#cb");
+    await vitestExpect(expect(locator).toBeChecked()).resolves.toBeUndefined();
+  });
+
+  it("throws AssertionError when not checked within timeout", async () => {
+    (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+    const locator = page.locator("#cb");
+    await vitestExpect(
+      expect(locator).toBeChecked({ timeout: 200 }),
+    ).rejects.toBeInstanceOf(AssertionError);
+  });
+});
+
+describe("expect(locator).toBeEnabled / toBeDisabled", () => {
+  let adapter: ProtocolAdapter;
+  let page: Page;
+
+  beforeEach(() => {
+    adapter = makeAdapter();
+    page = createPage(adapter, ctx);
+  });
+
+  it("toBeEnabled resolves when element is enabled", async () => {
+    (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+    const locator = page.locator("#btn");
+    await vitestExpect(expect(locator).toBeEnabled()).resolves.toBeUndefined();
+  });
+
+  it("toBeEnabled throws when disabled within timeout", async () => {
+    (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+    const locator = page.locator("#btn");
+    await vitestExpect(
+      expect(locator).toBeEnabled({ timeout: 200 }),
+    ).rejects.toBeInstanceOf(AssertionError);
+  });
+
+  it("toBeDisabled resolves when element is disabled", async () => {
+    (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+    const locator = page.locator("#btn");
+    await vitestExpect(expect(locator).toBeDisabled()).resolves.toBeUndefined();
+  });
+
+  it("toBeDisabled throws when enabled within timeout", async () => {
+    (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+    const locator = page.locator("#btn");
+    await vitestExpect(
+      expect(locator).toBeDisabled({ timeout: 200 }),
+    ).rejects.toBeInstanceOf(AssertionError);
+  });
+});
+
+describe("expect(locator).toHaveValue", () => {
+  let adapter: ProtocolAdapter;
+  let page: Page;
+
+  beforeEach(() => {
+    adapter = makeAdapter();
+    page = createPage(adapter, ctx);
+  });
+
+  it("resolves when input value matches", async () => {
+    (adapter.evaluate as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(true)    // waitForSelector
+      .mockResolvedValueOnce("hello"); // inputValue evaluate
+    const locator = page.locator("#input");
+    await vitestExpect(expect(locator).toHaveValue("hello")).resolves.toBeUndefined();
+  });
+
+  it("throws AssertionError when value does not match within timeout", async () => {
+    (adapter.evaluate as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce("other");
+    const locator = page.locator("#input");
+    await vitestExpect(
+      expect(locator).toHaveValue("hello", { timeout: 200 }),
+    ).rejects.toBeInstanceOf(AssertionError);
+  });
+});
+
+describe("expect(locator).toHaveCount", () => {
+  let adapter: ProtocolAdapter;
+  let page: Page;
+
+  beforeEach(() => {
+    adapter = makeAdapter();
+    page = createPage(adapter, ctx);
+  });
+
+  it("resolves when count matches", async () => {
+    (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValueOnce(3);
+    const locator = page.locator("li");
+    await vitestExpect(expect(locator).toHaveCount(3)).resolves.toBeUndefined();
+  });
+
+  it("throws AssertionError when count does not match within timeout", async () => {
+    (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValue(2);
+    const locator = page.locator("li");
+    await vitestExpect(
+      expect(locator).toHaveCount(5, { timeout: 200 }),
+    ).rejects.toBeInstanceOf(AssertionError);
+  });
+});
+
 describe("expect(page).toHaveURL", () => {
   let adapter: ProtocolAdapter;
   let page: Page;
