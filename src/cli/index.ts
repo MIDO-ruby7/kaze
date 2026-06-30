@@ -35,6 +35,7 @@ const { values, positionals } = parseArgs({
     screenshot: { type: "string" },
     grep: { type: "string" },
     "grep-invert": { type: "string" },
+    retries: { type: "string" },
     help: { type: "boolean", short: "h", default: false },
   },
   allowPositionals: true,
@@ -56,6 +57,7 @@ Options:
   --screenshot=off         Disable auto-screenshot on failure/timeout
   --grep=PATTERN           Only run tests matching regex pattern
   --grep-invert=PATTERN    Skip tests matching regex pattern
+  --retries=N              Retry failing tests N times (default: 0)
   --watch, -w              Watch for file changes and re-run tests
   -h, --help               Show this help
 
@@ -110,6 +112,8 @@ const patterns = args; // may be empty → detect all spec files
     const cliGrep = typeof values.grep === "string" ? values.grep : undefined;
     const cliGrepInvert =
       typeof values["grep-invert"] === "string" ? values["grep-invert"] : undefined;
+    const cliRetries =
+      typeof values.retries === "string" ? parseInt(values.retries, 10) : undefined;
 
     const config = mergeConfig(fileConfig, {
       workers: cliWorkers !== undefined && !isNaN(cliWorkers) ? cliWorkers : undefined,
@@ -118,6 +122,7 @@ const patterns = args; // may be empty → detect all spec files
       screenshot: cliScreenshot,
       grep: cliGrep,
       grepInvert: cliGrepInvert,
+      retries: cliRetries !== undefined && !isNaN(cliRetries) ? cliRetries : undefined,
       // testMatch: patterns are handled separately below
     });
 
@@ -140,6 +145,7 @@ const patterns = args; // may be empty → detect all spec files
         screenshot: screenshotEnabled,
         grep: config.grep,
         grepInvert: config.grepInvert,
+        retries: config.retries,
       });
       return;
     }
@@ -153,6 +159,7 @@ const patterns = args; // may be empty → detect all spec files
       screenshot: screenshotEnabled,
       grep: config.grep,
       grepInvert: config.grepInvert,
+      retries: config.retries,
     });
 
     const summary = report(results, reporterMode);

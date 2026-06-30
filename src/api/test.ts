@@ -35,6 +35,8 @@ interface PendingTest {
   timeout?: number;
   /** The describe scope path at registration time (e.g. "Suite A > Suite B"). */
   scope: string;
+  /** Number of retries for this test (from test.retry(n)). */
+  retries?: number;
 }
 
 type HookFn = () => Promise<void> | void;
@@ -84,6 +86,7 @@ interface TestFn {
   only: (name: string, fn: (page: Page) => Promise<void>, opts?: { timeout?: number }) => void;
   skip: (name: string, fn: (page: Page) => Promise<void>) => void;
   describe: DescribeFn;
+  retry: (retries: number) => (name: string, fn: (page: Page) => Promise<void>, opts?: { timeout?: number }) => void;
 }
 
 function testFn(
@@ -178,6 +181,30 @@ testFn.skip = function skip(
   _fn: (page: Page) => Promise<void>,
 ): void {
   // Skipped tests are simply not registered.
+};
+
+// ---------------------------------------------------------------------------
+// test.retry(n)(name, fn) — AC-1
+// ---------------------------------------------------------------------------
+
+testFn.retry = function retry(
+  retries: number,
+): (name: string, fn: (page: Page) => Promise<void>, opts?: { timeout?: number }) => void {
+  return function (
+    name: string,
+    fn: (page: Page) => Promise<void>,
+    opts?: { timeout?: number },
+  ): void {
+    const fullName = _currentDescribe ? `${_currentDescribe} > ${name}` : name;
+    _registry.push({
+      id: nextId(),
+      name: fullName,
+      fn,
+      timeout: opts?.timeout,
+      scope: _currentDescribe,
+      retries,
+    });
+  };
 };
 
 // ---------------------------------------------------------------------------
@@ -311,6 +338,7 @@ export function collectTestCases(pool: AdapterResolver, opts?: CollectOptions): 
     id: p.id,
     name: p.name,
     timeout: p.timeout,
+    retries: p.retries,
     fn: async (ctx: PooledContext): Promise<void> => {
       const adapter = pool.getAdapter(ctx.adapterId);
       const page = createPage(adapter, ctx);

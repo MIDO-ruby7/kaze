@@ -25,6 +25,8 @@ export interface KazeConfig {
   grep?: string;
   /** Regex pattern: skip tests whose name matches. */
   grepInvert?: string;
+  /** Default number of retries for all tests. */
+  retries?: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -121,6 +123,20 @@ function validateConfig(cfg: unknown): KazeConfig {
     result.grepInvert = c.grepInvert;
   }
 
+  if (c.retries !== undefined) {
+    if (
+      typeof c.retries !== "number" ||
+      !Number.isInteger(c.retries) ||
+      c.retries < 0
+    ) {
+      console.error(
+        `[kaze] Config error: "retries" must be a non-negative integer (got ${JSON.stringify(c.retries)})`
+      );
+      process.exit(2);
+    }
+    result.retries = c.retries;
+  }
+
   return result;
 }
 
@@ -169,6 +185,7 @@ export function mergeConfig(
     result.screenshot = cliOverrides.screenshot;
   if (cliOverrides.grep !== undefined) result.grep = cliOverrides.grep;
   if (cliOverrides.grepInvert !== undefined) result.grepInvert = cliOverrides.grepInvert;
+  if (cliOverrides.retries !== undefined) result.retries = cliOverrides.retries;
 
   return result;
 }
