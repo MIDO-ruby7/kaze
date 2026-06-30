@@ -75,7 +75,7 @@ test('my test', async (page) => { ... });
 | `locator.fill(value)` | Supported | auto-waiting; default timeout 30000ms; accepts `{ timeout }` option; retries if element detaches between selector check and fill |
 | `locator.textContent()` | Supported | auto-waiting; default timeout 30000ms; accepts `{ timeout }` option |
 | `locator.count()` | Supported | Returns number of matching elements |
-| `locator.all()` | Supported | Returns `Locator[]` for each matching element via `:nth-child` selectors |
+| `locator.all()` | Supported | Returns `Locator[]` for each matching element via `data-kaze-idx` attribute |
 | `locator.check(opts?)` | Supported | auto-waiting; sets `checked = true` and dispatches `change` event |
 | `locator.uncheck(opts?)` | Supported | auto-waiting; sets `checked = false` and dispatches `change` event |
 | `locator.selectOption(value, opts?)` | Supported | auto-waiting; accepts string (value), number (index), or `{ label }` / `{ value }` object |

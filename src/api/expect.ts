@@ -165,22 +165,40 @@ class LocatorExpect implements LocatorMatchers {
 
   /**
    * Assert that an element is disabled. Auto-retries.
-   * AC-3 (Issue #31)
+   * AC-3 / AC-11 (Issue #31): also throws if element is not found.
    */
   async toBeDisabled(opts?: { timeout?: number }): Promise<void> {
     const timeout = opts?.timeout ?? DEFAULT_TIMEOUT_MS;
     const deadline = Date.now() + timeout;
 
+    let lastResult: { found: boolean; disabled: boolean } | null = null;
+
     while (Date.now() < deadline) {
       try {
-        // isEnabled() returns true when enabled, false when disabled.
-        // toBeDisabled passes when isEnabled() returns false.
-        const isEnabled = await this.locator.isEnabled();
-        if (!isEnabled) return;
+        const result = await this.locator._evaluate(
+          `(function() {
+            const el = document.querySelector('${escapeSelector(this.locator.selector)}');
+            if (!el) return { found: false, disabled: false };
+            return { found: true, disabled: el.disabled === true };
+          })()`,
+        ) as { found: boolean; disabled: boolean };
+        lastResult = result;
+        if (result.found && result.disabled) return;
+        // Element found but not disabled — keep retrying until timeout
+        // Element not found — keep retrying until timeout
       } catch {
         // keep retrying
       }
       await delay(POLL_INTERVAL_MS);
+    }
+
+    if (lastResult !== null && !lastResult.found) {
+      throw new AssertionError(
+        `expect(locator).toBeDisabled()\n` +
+          `  Selector: ${this.locator.selector}\n` +
+          `  Element not found\n` +
+          `  Timeout: ${timeout}ms`,
+      );
     }
 
     throw new AssertionError(

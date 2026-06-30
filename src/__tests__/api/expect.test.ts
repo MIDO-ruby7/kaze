@@ -178,14 +178,25 @@ describe("expect(locator).toBeEnabled / toBeDisabled", () => {
   });
 
   it("toBeDisabled resolves when element is disabled", async () => {
-    (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValue(false);
+    // evaluate returns { found: true, disabled: true }
+    (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValue({ found: true, disabled: true });
     const locator = page.locator("#btn");
     await vitestExpect(expect(locator).toBeDisabled()).resolves.toBeUndefined();
   });
 
   it("toBeDisabled throws when enabled within timeout", async () => {
-    (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+    // evaluate returns { found: true, disabled: false } — element exists but is enabled
+    (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValue({ found: true, disabled: false });
     const locator = page.locator("#btn");
+    await vitestExpect(
+      expect(locator).toBeDisabled({ timeout: 200 }),
+    ).rejects.toBeInstanceOf(AssertionError);
+  });
+
+  it("toBeDisabled throws AssertionError when element does not exist", async () => {
+    // evaluate returns { found: false, disabled: false } — element absent
+    (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValue({ found: false, disabled: false });
+    const locator = page.locator("#nonexistent");
     await vitestExpect(
       expect(locator).toBeDisabled({ timeout: 200 }),
     ).rejects.toBeInstanceOf(AssertionError);
