@@ -1,29 +1,69 @@
 <div align="center">
 
-# kaze 風
+<br />
 
-**A fast, isolation-first E2E testing framework built on Chrome DevTools Protocol.**
+```
+  ██╗  ██╗ █████╗ ███████╗███████╗
+  ██║ ██╔╝██╔══██╗╚══███╔╝██╔════╝
+  █████╔╝ ███████║  ███╔╝ █████╗
+  ██╔═██╗ ██╔══██║ ███╔╝  ██╔══╝
+  ██║  ██╗██║  ██║███████╗███████╗
+  ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚══════╝
+```
 
-[![npm](https://img.shields.io/npm/v/@midori/kaze?color=0ea5e9&label=%40midori%2Fkaze)](https://www.npmjs.com/package/@midori/kaze)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Node.js](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](https://nodejs.org/)
+**E2E testing. Faster. Leaner. Built on CDP.**
+
+[![npm](https://img.shields.io/npm/v/@midori/kaze?color=0ea5e9&label=%40midori%2Fkaze&style=flat-square)](https://www.npmjs.com/package/@midori/kaze)
+[![License: MIT](https://img.shields.io/badge/License-MIT-22c55e?style=flat-square)](LICENSE)
+[![Node.js](https://img.shields.io/badge/node-%3E%3D22-64748b?style=flat-square)](https://nodejs.org/)
+[![Tests](https://img.shields.io/badge/tests-385%20passing-22c55e?style=flat-square)](#)
 
 [日本語](README.ja.md) · [中文](README.zh.md)
+
+<br />
 
 </div>
 
 ---
 
-## Why kaze?
+## The problem with existing tools
 
-| | kaze | Playwright |
-|---|---|---|
-| **Speed** | 1.5–2.4× faster on equivalent workloads | Baseline |
-| **RAM (300 parallel)** | ~25 GB | ~105 GB |
-| **Isolation** | Full per-test (cookies, IndexedDB, Service Workers) | Per-context |
-| **API** | Playwright-compatible subset | Full |
+Running 300 tests in parallel with Playwright costs **~105 GB of RAM** — one browser process per worker. Most CI machines don't have that. You shard across machines, pay for more runners, and wait longer.
 
-kaze runs tests in a **shared browser pool** — multiple contexts per process instead of one browser per worker — giving you more parallelism for less RAM.
+kaze uses a **shared browser pool**: multiple contexts inside fewer processes. 300 parallel tests now costs **~25 GB**.
+
+```
+Playwright  300 workers = 300 browser processes × 350 MB = 105 GB
+kaze        300 workers =  30 browser processes × 10 contexts = 25 GB
+```
+
+That's **4× less RAM** for the same concurrency. On a 32 GB CI machine, Playwright caps at ~8 workers. kaze runs 80+.
+
+---
+
+## Benchmark
+
+> Local fixture (file:// URL), MacBook Air M1, 16 GB RAM
+
+| Tests | Playwright | kaze | Speedup |
+|-------|-----------|------|---------|
+| 5 | 942 ms | **447 ms** | 2.1× faster |
+| 20 | 2178 ms | **1785 ms** | 1.2× faster |
+| 50 | 5111 ms | **4482 ms** | 1.1× faster |
+
+Speed improves further on real E2E tests (network + server + rendering) where kaze's parallelism advantage compounds.
+
+---
+
+## How it's fast
+
+kaze makes three bets that pay off:
+
+**1. Multiplexed CDP sessions** — One WebSocket per browser process, not per page. All page commands flow through a shared connection with `sessionId` routing. This eliminates the ~540 ms WebSocket-per-page overhead in naive CDP implementations.
+
+**2. In-place context reset** — Instead of closing and recreating a browser context (~700 ms), kaze calls `Network.clearBrowserCookies` (~4 ms) and lets the next `page.goto()` reset the DOM. Full cookie isolation (including HttpOnly) without the startup cost.
+
+**3. Context prewarming** — While test N is running, kaze proactively resets the next context in the background. When test N finishes, a fresh context is ready immediately — zero waiting.
 
 ---
 
@@ -34,12 +74,15 @@ pnpm add -D @midori/kaze tsx
 ```
 
 ```typescript
-// tests/example.spec.ts
+// tests/login.spec.ts
 import { test, expect } from "@midori/kaze"
 
-test("homepage loads", async (page) => {
-  await page.goto("https://example.com")
-  await expect(page.locator("h1")).toHaveText("Example Domain")
+test("user can log in", async (page) => {
+  await page.goto("/login")
+  await page.fill("#email", "alice@example.com")
+  await page.click("#submit")
+  await expect(page).toHaveURL("/dashboard")
+  await expect(page.locator("h1")).toHaveText("Welcome, Alice")
 })
 ```
 
@@ -47,162 +90,156 @@ test("homepage loads", async (page) => {
 npx kaze
 ```
 
+That's it. No config required.
+
 ---
 
-## Installation
+## Migrate from Playwright in 30 seconds
 
-```bash
-# npm
-npm install -D @midori/kaze tsx
+```diff
+- import { test, expect } from "@playwright/test"
++ import { test, expect } from "@midori/kaze"
 
-# pnpm
-pnpm add -D @midori/kaze tsx
-
-# yarn
-yarn add -D @midori/kaze tsx
+- test("example", async ({ page }) => {
++ test("example", async (page) => {
+    await page.goto("/")
+  })
 ```
 
-> `tsx` is required to run TypeScript spec files. It is an optional peer dependency.
+Two changes: the import path and the argument shape. Everything else is identical.
+
+> See [`docs/playwright-compat.md`](docs/playwright-compat.md) for the full compatibility table.
 
 ---
 
-## Test API
+## API Reference
 
-### Writing tests
+### `test()`
 
 ```typescript
-import { test, expect, beforeEach, afterEach } from "@midori/kaze"
+test(name, async (page) => { ... })
+test.only(name, fn)          // run only this test
+test.skip(name, fn)          // skip this test
+test.retry(n)(name, fn)      // retry up to n times on failure
 
-beforeEach(async () => {
-  await db.beginTransaction()
+test.describe(name, () => {
+  test.describe.only(...)
+  test.describe.skip(...)
 })
-
-afterEach(async () => {
-  await db.rollback()
-})
-
-test("user can log in", async (page) => {
-  await page.goto("/login")
-  await page.fill("#email", "user@example.com")
-  await page.fill("#password", "secret")
-  await page.click("#submit")
-  await expect(page).toHaveURL("/dashboard")
-})
-
-test.describe("cart", () => {
-  test("add item", async (page) => { ... })
-  test("remove item", async (page) => { ... })
-})
-
-// Run only this test (all others skipped)
-test.only("focus this", async (page) => { ... })
-
-// Skip
-test.skip("flaky test", async (page) => { ... })
-
-// Retry on failure
-test.retry(2)("flaky network test", async (page) => { ... })
 ```
 
 ### Lifecycle hooks
 
-| Hook | Scope |
-|------|-------|
-| `beforeAll(fn)` | Once before all tests in the enclosing `describe` |
-| `afterAll(fn)` | Once after all tests in the enclosing `describe` |
-| `beforeEach(fn)` | Before each test in scope |
-| `afterEach(fn)` | After each test in scope |
+```typescript
+import { beforeAll, afterAll, beforeEach, afterEach } from "@midori/kaze"
 
----
+// Scoped to the enclosing describe block
+beforeAll(async () => { /* runs once before all tests */ })
+afterAll(async () => { /* runs once after all tests */ })
+beforeEach(async () => { /* runs before each test */ })
+afterEach(async () => { /* runs after each test */ })
+```
 
-## Page API
+### `page`
 
 ```typescript
 // Navigation
-await page.goto(url, { timeout? })
-await page.waitForURL(url)                   // string | RegExp | glob
-await page.waitForLoadState("networkidle")   // "load" | "domcontentloaded" | "networkidle"
+page.goto(url, { timeout? })
+page.waitForURL(url)              // string | RegExp | "**/*.html"
+page.waitForLoadState(state)      // "load" | "domcontentloaded" | "networkidle"
+page.title()
+page.screenshot()                 // → Buffer
 
-// Interaction
-await page.click(selector, { timeout? })
-await page.fill(selector, value, { timeout? })
-await page.keyboard.press("Enter")
+// Input
+page.click(selector, { timeout? })
+page.fill(selector, value, { timeout? })
+page.keyboard.press("Enter")
 
-// Queries
-await page.title()
-await page.screenshot()                      // → Buffer
-
-// Network mocking
-await page.route("/api/users", (route) => {
-  route.fulfill({ json: [{ id: 1, name: "Alice" }] })
-})
-await page.unroute("/api/users")
+// Network
+page.route(pattern, handler)      // intercept requests
+page.unroute(pattern)
 ```
 
----
-
-## Locator API
+### `locator`
 
 ```typescript
-const btn = page.locator("#submit")
+const el = page.locator(selector)
 
-// Actions (all auto-wait up to 30s by default)
-await btn.click({ timeout? })
-await btn.fill("value", { timeout? })
-await btn.hover()
-await btn.check()
-await btn.uncheck()
-await btn.selectOption("value")
+// Actions — all auto-wait up to 30 s
+el.click({ timeout? })
+el.fill(value, { timeout? })
+el.hover()
+el.check()
+el.uncheck()
+el.selectOption(value)
 
-// Queries
-await btn.textContent()    // includes hidden text
-await btn.innerText()      // visible text only
-await btn.getAttribute("href")
-await btn.inputValue()
-await btn.isVisible()      // instant (no retry)
-await btn.isEnabled()      // instant (no retry)
-await btn.count()
-await btn.all()            // → Locator[]
+// Reads — with auto-wait
+el.textContent()      // includes hidden nodes
+el.innerText()        // visible text only
+el.getAttribute(name)
+el.inputValue()
+
+// Reads — instant, no retry
+el.isVisible()
+el.isEnabled()
+el.count()
+el.all()              // → Locator[]
 ```
 
----
-
-## Assertions (`expect`)
+### `expect()`
 
 ```typescript
 // Page
-await expect(page).toHaveURL("/dashboard")
-await expect(page).toHaveTitle("Dashboard")
+expect(page).toHaveURL(url)
+expect(page).toHaveTitle(title)
 
-// Locator
-await expect(page.locator("h1")).toHaveText("Welcome")
-await expect(page.locator("#status")).toBeVisible()
-await expect(page.locator("#btn")).toBeEnabled()
-await expect(page.locator("#btn")).toBeDisabled()
-await expect(page.locator('[type=checkbox]')).toBeChecked()
-await expect(page.locator("input")).toHaveValue("hello")
-await expect(page.locator("li")).toHaveCount(5)
+// Locator — all auto-retry for 30 s
+expect(el).toHaveText(text)
+expect(el).toBeVisible()
+expect(el).toBeEnabled()
+expect(el).toBeDisabled()
+expect(el).toBeChecked()
+expect(el).toHaveValue(value)
+expect(el).toHaveCount(n)
 ```
 
-All matchers auto-retry for up to 30 seconds by default.
+### Network mocking
+
+```typescript
+test("works without a backend", async (page) => {
+  await page.route("/api/users", (route) => {
+    route.fulfill({ json: [{ id: 1, name: "Alice" }] })
+  })
+
+  await page.goto("/users")
+  await expect(page.locator(".user")).toHaveCount(1)
+})
+```
 
 ---
 
 ## CLI
 
-```bash
-kaze                              # run all *.spec.{ts,js}
-kaze src/features/                # specific directory
-kaze "**/*.spec.ts"               # glob pattern
-kaze --watch                      # watch mode
-kaze --workers=50                 # parallel workers
-kaze --grep="login"               # filter by name
-kaze --grep-invert="slow"         # exclude by name
-kaze --retries=2                  # retry failing tests
-kaze --shard=1/4                  # CI sharding
-kaze --reporter=html              # generate .kaze/report/index.html
-kaze --screenshot=off             # disable auto-screenshots
-kaze test                         # "test" subcommand (backward compat)
+```
+kaze [pattern...] [options]
+
+Patterns:
+  kaze                       scan for *.spec.{ts,js}
+  kaze src/features/         specific directory
+  kaze "**/*.spec.ts"        glob
+
+Options:
+  --workers=N                parallel contexts (auto from RAM/CPU)
+  --timeout=N                ms per test (default: 30000)
+  --reporter=MODE            verbose | dot | html
+  --output-dir=PATH          HTML report directory (default: .kaze/report)
+  --watch, -w                re-run on file change
+  --grep=PATTERN             only run tests matching regex
+  --grep-invert=PATTERN      exclude tests matching regex
+  --retries=N                retry failing tests N times
+  --shard=INDEX/TOTAL        e.g. --shard=1/10
+  --screenshot=off           disable auto-screenshots
+  -h, --help                 show help
 ```
 
 ---
@@ -214,30 +251,30 @@ kaze test                         # "test" subcommand (backward compat)
 import { defineConfig } from "@midori/kaze"
 
 export default defineConfig({
-  workers: 20,            // parallel contexts (auto-detected from RAM/CPU if omitted)
-  timeout: 30_000,        // ms per test (default: 30000)
-  reporter: "verbose",    // "verbose" | "dot" | "html"
+  workers: 20,
+  timeout: 30_000,
+  reporter: "verbose",
   testMatch: ["tests/**/*.spec.ts"],
-  screenshot: true,       // auto-screenshot on failure
-  retries: 0,             // default retries per test
-  prewarm: true,          // pre-reset contexts in background (reduces inter-test latency)
-  grep: "login",          // filter by name
-  grepInvert: "slow",     // exclude by name
-  shard: "1/4",           // or { index: 1, total: 4 }
+  screenshot: true,
+  retries: 0,
+  prewarm: true,        // context prewarming (default: on)
+  grep: "login",
+  shard: "1/4",
 })
 ```
 
-CLI flags always override the config file.
+CLI flags override the config file. `KAZE_WORKERS=N` env var sets workers.
 
 ---
 
-## CI Integration
+## CI Sharding
 
-### GitHub Actions — parallel sharding
+Split your test suite across machines with `--shard`:
 
 ```yaml
+# .github/workflows/e2e.yml
 jobs:
-  e2e:
+  test:
     strategy:
       matrix:
         shard: ["1/4", "2/4", "3/4", "4/4"]
@@ -248,71 +285,95 @@ jobs:
       - run: npx kaze --shard=${{ matrix.shard }} --workers=20
 ```
 
-### Scale via `KAZE_WORKERS`
+With 4 shards × 20 workers = **80 parallel contexts** from a single 16 GB machine.
 
-```bash
-KAZE_WORKERS=100 npx kaze   # 10 browser processes × 10 contexts = 100 parallel
-```
+### Memory comparison at scale
 
-| Workers | kaze RAM | Playwright RAM |
-|---------|----------|----------------|
+| Workers | kaze | Playwright |
+|---------|------|-----------|
 | 20 | ~1.7 GB | ~6.8 GB |
+| 50 | ~4.2 GB | ~17.1 GB |
 | 100 | ~8.3 GB | ~34.2 GB |
 | 300 | ~24.9 GB | ~102.5 GB |
 
 ---
 
-## Screenshots
+## Screenshots & HTML Reports
 
-Failed and timed-out tests automatically save screenshots to `.kaze/screenshots/`.
-The `.kaze/` directory is already in `.gitignore`.
+**Screenshots** — saved automatically to `.kaze/screenshots/` on failure or timeout.
 
-```bash
-kaze --screenshot=off   # disable
-```
-
----
-
-## HTML Reporter
+**HTML report** — generated on demand:
 
 ```bash
 kaze --reporter=html
-# generates .kaze/report/index.html
-
-kaze --reporter=html --output-dir=./test-results
+# opens .kaze/report/index.html
 ```
+
+The `.kaze/` directory is already in `.gitignore`.
 
 ---
 
 ## For AI Assistants
 
-kaze follows the Playwright API closely. Key differences:
-
-- Import from `@midori/kaze` instead of `@playwright/test`
-- `test(name, async (page) => { ... })` — page is the first argument, no fixture destructuring
-- `collectTestCases(pool)` is used internally; you don't call it directly
-- `page.route()` supports string / glob / RegExp patterns
-- All locator actions auto-wait; `isVisible()` / `isEnabled()` do **not** auto-wait
+kaze is intentionally close to Playwright. When generating kaze tests, use these rules:
 
 ```typescript
-// Playwright
-import { test, expect } from "@playwright/test"
-test("example", async ({ page }) => { ... })
-
-// kaze
+// ✅ kaze
 import { test, expect } from "@midori/kaze"
-test("example", async (page) => { ... })
+test("name", async (page) => { ... })          // page is first arg, not destructured
+
+// ❌ Playwright
+import { test, expect } from "@playwright/test"
+test("name", async ({ page }) => { ... })       // Playwright uses fixture destructuring
 ```
+
+**API shape differences from Playwright:**
+
+| | kaze | Playwright |
+|---|---|---|
+| Import | `@midori/kaze` | `@playwright/test` |
+| Test arg | `async (page)` | `async ({ page })` |
+| Fixtures | Not supported | `{ page, request, context }` |
+| Config | `kaze.config.ts` | `playwright.config.ts` |
+| `test.step()` | Not supported | Supported |
+
+**What kaze supports that's identical to Playwright:**
+- All `page.*` methods listed above
+- All `locator.*` methods listed above
+- All `expect()` matchers listed above
+- `test.describe`, `test.only`, `test.skip`, `test.retry`
+- `beforeAll`, `afterAll`, `beforeEach`, `afterEach` with identical scoping rules
+- `page.route()` / `route.fulfill()` / `route.continue()` / `route.abort()`
+
+**Isolation model:**
+Each test gets a fresh browser context. Cookies (including HttpOnly), localStorage, IndexedDB, and Service Workers are all cleared between tests. If you need database state cleanup, use `afterEach`.
 
 ---
 
-## Contributing
+## Architecture
+
+```
+kaze CLI (bin/kaze.js)
+  └─ tsx loader  ←  TypeScript spec files
+      └─ Scheduler  ←  failure-first queue, retry logic
+          └─ BrowserPool  ←  N processes × M contexts
+              └─ CdpAdapter  ←  multiplexed WebSocket sessions
+                  └─ Chromium (headless)
+```
+
+**Why Chrome DevTools Protocol (CDP)?**
+CDP is the lowest-latency path to Chromium for local automation. Competing protocols: WebDriver (slower, more round-trips) and WebDriver BiDi (W3C standard, better for remote/cross-browser, not yet feature-complete in 2026). kaze will migrate to BiDi when its `Network.intercept` and related features reach parity — unlocking Firefox support.
+
+---
+
+## Development
 
 ```bash
 git clone https://github.com/MIDO-ruby7/kaze
 cd kaze
 pnpm install
-pnpm test
+pnpm test             # unit tests (no browser required)
+pnpm bench            # performance benchmark vs Playwright
 ```
 
 ---

@@ -1,29 +1,68 @@
 <div align="center">
 
-# kaze 風
+<br />
 
-**Chrome DevTools Protocol 上に構築された、高速・完全分離の E2E テストフレームワーク**
+```
+  ██╗  ██╗ █████╗ ███████╗███████╗
+  ██║ ██╔╝██╔══██╗╚══███╔╝██╔════╝
+  █████╔╝ ███████║  ███╔╝ █████╗
+  ██╔═██╗ ██╔══██║ ███╔╝  ██╔══╝
+  ██║  ██╗██║  ██║███████╗███████╗
+  ╚═╝  ╚═╝╚═╝  ╚═╝╚══════╝╚══════╝
+```
 
-[![npm](https://img.shields.io/npm/v/@midori/kaze?color=0ea5e9&label=%40midori%2Fkaze)](https://www.npmjs.com/package/@midori/kaze)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Node.js](https://img.shields.io/badge/node-%3E%3D22-brightgreen)](https://nodejs.org/)
+**E2E テスト。より速く。より軽く。CDP で構築。**
+
+[![npm](https://img.shields.io/npm/v/@midori/kaze?color=0ea5e9&label=%40midori%2Fkaze&style=flat-square)](https://www.npmjs.com/package/@midori/kaze)
+[![License: MIT](https://img.shields.io/badge/License-MIT-22c55e?style=flat-square)](LICENSE)
+[![Node.js](https://img.shields.io/badge/node-%3E%3D22-64748b?style=flat-square)](https://nodejs.org/)
 
 [English](README.md) · [中文](README.zh.md)
+
+<br />
 
 </div>
 
 ---
 
-## なぜ kaze？
+## 既存ツールの問題
 
-| | kaze | Playwright |
-|---|---|---|
-| **速度** | 同等ワークロードで 1.5〜2.4× 速い | ベースライン |
-| **RAM（300 並列）** | 約 25 GB | 約 105 GB |
-| **テスト分離** | Cookie・IndexedDB・Service Worker を含む完全分離 | コンテキスト単位 |
-| **API** | Playwright 互換サブセット | フルセット |
+Playwright で 300 並列テストを実行すると RAM が **約 105 GB** 必要です――ワーカーごとにブラウザプロセスを起動するためです。16 GB の CI マシンでは 8 ワーカーが限界。多くのマシンに分散し、コストをかけ、待ち時間が長くなります。
 
-kaze は**共有ブラウザプール**でテストを実行します。ワーカーごとにブラウザを起動する代わりに、1プロセスで複数のコンテキストを管理するため、少ない RAM でより多くの並列実行が可能です。
+kaze は**共有ブラウザプール**を使います。少ないプロセスの中に複数のコンテキストを収める設計です。300 並列のコストは **約 25 GB**。
+
+```
+Playwright  300 workers = 300 ブラウザプロセス × 350 MB = 105 GB
+kaze        300 workers =  30 ブラウザプロセス × 10 コンテキスト = 25 GB
+```
+
+**同じ並列数で RAM を 4 分の 1** に削減。32 GB の CI マシンで kaze なら 80 以上の並列実行が可能です。
+
+---
+
+## ベンチマーク
+
+> ローカルファイル（file:// URL）、MacBook Air M1、16 GB RAM
+
+| テスト数 | Playwright | kaze | 速度比 |
+|---------|-----------|------|--------|
+| 5件 | 942 ms | **447 ms** | 2.1× 速い |
+| 20件 | 2178 ms | **1785 ms** | 1.2× 速い |
+| 50件 | 5111 ms | **4482 ms** | 1.1× 速い |
+
+ネットワークやサーバーレンダリングを含む実際の E2E テストでは、kaze の並列化優位性がさらに高まります。
+
+---
+
+## なぜ速いのか
+
+kaze は 3 つの技術的な選択で速さを実現しています。
+
+**1. Multiplexed CDP セッション** — ブラウザプロセスごとに 1 つの WebSocket。ページごとに接続を開かず、`sessionId` でルーティングします。素朴な CDP 実装で発生するページごとの ~540 ms オーバーヘッドを排除。
+
+**2. インプレース・コンテキストリセット** — ブラウザコンテキストを閉じて作り直す代わり（~700 ms）、`Network.clearBrowserCookies`（~4 ms）を呼ぶだけ。HttpOnly Cookie を含む完全な Cookie 分離を、起動コストなしで実現。
+
+**3. コンテキストプリウォーミング** — テスト N が実行中、次のコンテキストのリセットをバックグラウンドで先行実行。テスト N が終わったとき、新鮮なコンテキストが即座に使える状態になっています。
 
 ---
 
@@ -34,12 +73,15 @@ pnpm add -D @midori/kaze tsx
 ```
 
 ```typescript
-// tests/example.spec.ts
+// tests/login.spec.ts
 import { test, expect } from "@midori/kaze"
 
-test("ホームページが表示される", async (page) => {
-  await page.goto("https://example.com")
-  await expect(page.locator("h1")).toHaveText("Example Domain")
+test("ユーザーがログインできる", async (page) => {
+  await page.goto("/login")
+  await page.fill("#email", "alice@example.com")
+  await page.click("#submit")
+  await expect(page).toHaveURL("/dashboard")
+  await expect(page.locator("h1")).toHaveText("ようこそ、Alice")
 })
 ```
 
@@ -47,134 +89,146 @@ test("ホームページが表示される", async (page) => {
 npx kaze
 ```
 
+設定不要。これだけで動きます。
+
 ---
 
-## インストール
+## Playwright から 30 秒で移行
 
-```bash
-npm install -D @midori/kaze tsx
-# または
-pnpm add -D @midori/kaze tsx
+```diff
+- import { test, expect } from "@playwright/test"
++ import { test, expect } from "@midori/kaze"
+
+- test("例", async ({ page }) => {
++ test("例", async (page) => {
+    await page.goto("/")
+  })
 ```
 
-> TypeScript のスペックファイルを実行するには `tsx` が必要です（optional peer dependency）。
+変更点は 2 箇所だけ：インポートパスと引数の書き方。あとは全て同じです。
+
+> 互換性の詳細は [`docs/playwright-compat.md`](docs/playwright-compat.md) を参照してください。
 
 ---
 
-## テスト API
+## API リファレンス
+
+### `test()`
 
 ```typescript
-import { test, expect, beforeEach, afterEach } from "@midori/kaze"
+test(name, async (page) => { ... })
+test.only(name, fn)          // このテストだけ実行
+test.skip(name, fn)          // スキップ
+test.retry(n)(name, fn)      // 失敗時に最大 n 回リトライ
 
-beforeEach(async () => {
-  await db.beginTransaction()
+test.describe(name, () => {
+  test.describe.only(...)
+  test.describe.skip(...)
 })
-
-afterEach(async () => {
-  await db.rollback()
-})
-
-test("ユーザーがログインできる", async (page) => {
-  await page.goto("/login")
-  await page.fill("#email", "user@example.com")
-  await page.fill("#password", "secret")
-  await page.click("#submit")
-  await expect(page).toHaveURL("/dashboard")
-})
-
-// このテストだけ実行（他はスキップ）
-test.only("このテストに集中", async (page) => { ... })
-
-// スキップ
-test.skip("一時的にスキップ", async (page) => { ... })
-
-// 失敗時に最大2回リトライ
-test.retry(2)("不安定なテスト", async (page) => { ... })
 ```
 
 ### ライフサイクルフック
 
-| フック | スコープ |
-|--------|---------|
-| `beforeAll(fn)` | 同じ `describe` 内の全テストの前に1回実行 |
-| `afterAll(fn)` | 同じ `describe` 内の全テストの後に1回実行 |
-| `beforeEach(fn)` | スコープ内の各テストの前に実行 |
-| `afterEach(fn)` | スコープ内の各テストの後に実行 |
+```typescript
+import { beforeAll, afterAll, beforeEach, afterEach } from "@midori/kaze"
 
----
+beforeAll(async () => { /* describe 内の全テストの前に1回 */ })
+afterAll(async () => { /* describe 内の全テストの後に1回 */ })
+beforeEach(async () => { /* 各テストの前 */ })
+afterEach(async () => { /* 各テストの後 */ })
+```
 
-## Page API
+### `page`
 
 ```typescript
-await page.goto(url)
-await page.waitForURL(url)                  // 文字列 | RegExp | glob
-await page.waitForLoadState("networkidle")  // "load" | "domcontentloaded" | "networkidle"
-await page.click(selector)
-await page.fill(selector, value)
-await page.keyboard.press("Enter")
-await page.title()
-await page.screenshot()                     // → Buffer
+// ナビゲーション
+page.goto(url, { timeout? })
+page.waitForURL(url)              // 文字列 | RegExp | glob
+page.waitForLoadState(state)      // "load" | "domcontentloaded" | "networkidle"
+page.title()
+page.screenshot()                 // → Buffer
 
-// ネットワークモック
-await page.route("/api/users", (route) => {
-  route.fulfill({ json: [{ id: 1, name: "Alice" }] })
+// 操作
+page.click(selector, { timeout? })
+page.fill(selector, value, { timeout? })
+page.keyboard.press("Enter")
+
+// ネットワーク
+page.route(pattern, handler)      // リクエストをインターセプト
+page.unroute(pattern)
+```
+
+### `locator`
+
+```typescript
+const el = page.locator(selector)
+
+// アクション — すべてデフォルト30秒間自動リトライ
+el.click({ timeout? })
+el.fill(value, { timeout? })
+el.hover()
+el.check()
+el.uncheck()
+el.selectOption(value)
+
+// 読み取り（自動リトライあり）
+el.textContent()      // 非表示ノードを含む
+el.innerText()        // 表示テキストのみ
+el.getAttribute(name)
+el.inputValue()
+
+// 読み取り（即時・リトライなし）
+el.isVisible()
+el.isEnabled()
+el.count()
+el.all()              // → Locator[]
+```
+
+### `expect()`
+
+```typescript
+// Page
+expect(page).toHaveURL(url)
+expect(page).toHaveTitle(title)
+
+// Locator — すべて30秒間自動リトライ
+expect(el).toHaveText(text)
+expect(el).toBeVisible()
+expect(el).toBeEnabled()
+expect(el).toBeDisabled()
+expect(el).toBeChecked()
+expect(el).toHaveValue(value)
+expect(el).toHaveCount(n)
+```
+
+### ネットワークモック
+
+```typescript
+test("バックエンドなしで動作する", async (page) => {
+  await page.route("/api/users", (route) => {
+    route.fulfill({ json: [{ id: 1, name: "Alice" }] })
+  })
+
+  await page.goto("/users")
+  await expect(page.locator(".user")).toHaveCount(1)
 })
 ```
-
----
-
-## Locator API
-
-```typescript
-const btn = page.locator("#submit")
-
-await btn.click()
-await btn.fill("値")
-await btn.hover()
-await btn.check()
-await btn.uncheck()
-await btn.selectOption("東京")
-await btn.textContent()     // 非表示テキストを含む
-await btn.innerText()       // 表示テキストのみ
-await btn.getAttribute("href")
-await btn.inputValue()
-await btn.isVisible()       // 即時（リトライなし）
-await btn.isEnabled()       // 即時（リトライなし）
-await btn.count()
-await btn.all()             // → Locator[]
-```
-
----
-
-## アサーション
-
-```typescript
-await expect(page).toHaveURL("/dashboard")
-await expect(page).toHaveTitle("ダッシュボード")
-await expect(page.locator("h1")).toHaveText("ようこそ")
-await expect(page.locator("#status")).toBeVisible()
-await expect(page.locator("#btn")).toBeEnabled()
-await expect(page.locator('[type=checkbox]')).toBeChecked()
-await expect(page.locator("input")).toHaveValue("hello")
-await expect(page.locator("li")).toHaveCount(5)
-```
-
-デフォルトで最大30秒間自動リトライします。
 
 ---
 
 ## CLI
 
 ```bash
-kaze                      # *.spec.{ts,js} を全て実行
-kaze src/features/        # ディレクトリ指定
-kaze --watch              # ウォッチモード
-kaze --workers=50         # 並列数
-kaze --grep="ログイン"    # テスト名フィルタ
-kaze --retries=2          # 失敗時リトライ
-kaze --shard=1/4          # CIシャーディング
-kaze --reporter=html      # HTMLレポート生成
-kaze --screenshot=off     # スクリーンショット無効
+kaze                       # *.spec.{ts,js} を全て実行
+kaze src/features/         # ディレクトリ指定
+kaze "**/*.spec.ts"        # glob パターン
+kaze --workers=50          # 並列数
+kaze --watch               # ウォッチモード
+kaze --grep="ログイン"     # テスト名フィルタ
+kaze --retries=2           # 失敗時リトライ
+kaze --shard=1/4           # CI シャーディング
+kaze --reporter=html       # HTML レポート生成
+kaze --screenshot=off      # スクリーンショット無効
 ```
 
 ---
@@ -192,15 +246,17 @@ export default defineConfig({
   testMatch: ["tests/**/*.spec.ts"],
   screenshot: true,
   retries: 0,
-  prewarm: true,          // バックグラウンドでコンテキストを事前リセット
+  prewarm: true,          // コンテキストプリウォーミング（デフォルト ON）
   grep: "ログイン",
   shard: "1/4",
 })
 ```
 
+CLI フラグは常に設定ファイルより優先されます。`KAZE_WORKERS=N` 環境変数でも並列数を設定できます。
+
 ---
 
-## CI でのシャーディング
+## CI シャーディング
 
 ```yaml
 jobs:
@@ -212,36 +268,44 @@ jobs:
       - run: npx kaze --shard=${{ matrix.shard }} --workers=20
 ```
 
-### `KAZE_WORKERS` で大規模並列
+4 シャード × 20 ワーカー = 16 GB マシン 1 台で **80 並列コンテキスト**。
 
-```bash
-KAZE_WORKERS=100 npx kaze   # 10プロセス × 10コンテキスト = 100並列
-```
+### スケール時のメモリ比較
 
-| 並列数 | kaze RAM | Playwright RAM |
-|--------|----------|----------------|
+| 並列数 | kaze | Playwright |
+|--------|------|-----------|
 | 20 | 約 1.7 GB | 約 6.8 GB |
 | 100 | 約 8.3 GB | 約 34.2 GB |
 | 300 | 約 24.9 GB | 約 102.5 GB |
 
 ---
 
-## スクリーンショット
+## スクリーンショット & HTML レポート
 
-失敗・タイムアウト時に自動で `.kaze/screenshots/` に保存されます。
+失敗・タイムアウト時に **自動で** `.kaze/screenshots/` へ保存されます。
 
 ```bash
-kaze --screenshot=off   # 無効化
+kaze --reporter=html      # .kaze/report/index.html を生成
+kaze --screenshot=off     # スクリーンショット無効
 ```
+
+`.kaze/` は `.gitignore` に含まれています。
 
 ---
 
-## HTMLレポーター
+## アーキテクチャ
 
-```bash
-kaze --reporter=html
-# .kaze/report/index.html を生成
 ```
+kaze CLI (bin/kaze.js)
+  └─ tsx ローダー  ←  TypeScript スペックファイル
+      └─ Scheduler  ←  失敗優先キュー、リトライ
+          └─ BrowserPool  ←  N プロセス × M コンテキスト
+              └─ CdpAdapter  ←  多重化 WebSocket セッション
+                  └─ Chromium（ヘッドレス）
+```
+
+**なぜ Chrome DevTools Protocol（CDP）なのか？**
+CDP はローカル自動化において Chromium への最低レイテンシな経路です。WebDriver BiDi（W3C 標準）はリモート/クロスブラウザ向けに設計されており、2026 年現在はまだ機能が不完全です。BiDi の `Network.intercept` 等が成熟した時点で kaze も移行し、Firefox サポートを実現する予定です。
 
 ---
 
