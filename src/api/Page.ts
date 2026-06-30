@@ -31,6 +31,18 @@ export interface WaitForSelectorOptions {
   timeout?: number;
 }
 
+export interface WaitForURLOptions {
+  /** Maximum wait time in milliseconds. Defaults to 30000. */
+  timeout?: number;
+}
+
+export interface WaitForLoadStateOptions {
+  /** Maximum wait time in milliseconds. Defaults to 30000. */
+  timeout?: number;
+}
+
+export type LoadState = "load" | "domcontentloaded" | "networkidle";
+
 export interface ClickOptions {
   /** Maximum wait time for the element to appear in milliseconds. Defaults to 30000. */
   timeout?: number;
@@ -232,6 +244,108 @@ export class Page {
       "window.location.href",
     );
     return String(result);
+  }
+
+  /**
+   * Wait until the page URL matches the given pattern.
+   * Accepts an exact string, a glob (** wildcard), or a RegExp.
+   * AC-3 (Issue #36)
+   */
+  async waitForURL(url: string | RegExp, opts?: WaitForURLOptions): Promise<void> {
+    const timeout = opts?.timeout ?? 30_000;
+    const deadline = Date.now() + timeout;
+    while (Date.now() < deadline && !this._cancelled) {
+      const current = await this.adapter.evaluate(
+        this.contextId,
+        "window.location.href",
+      ) as string;
+      if (matchesUrlPattern(url, String(current))) return;
+      await delay(100);
+    }
+    if (this._cancelled) {
+      throw new Error(`URL wait cancelled`);
+    }
+    throw new Error(`Timeout ${timeout}ms waiting for URL ${url}`);
+  }
+
+  /**
+   * Wait until the page reaches the given load state.
+   *
+   * - "load" / "domcontentloaded": polls `document.readyState`
+   * - "networkidle": waits until there is no fetch/XHR activity for 500ms
+   *
+   * AC-4 (Issue #36)
+   */
+  async waitForLoadState(
+    state: LoadState = "load",
+    opts?: WaitForLoadStateOptions,
+  ): Promise<void> {
+    const timeout = opts?.timeout ?? 30_000;
+    const deadline = Date.now() + timeout;
+
+    if (state === "networkidle") {
+      // Inject a counter that tracks in-flight fetch/XHR, then wait until it
+      // has been at zero continuously for 500ms.
+      await this.adapter.evaluate(
+        this.contextId,
+        `(function() {
+          if (window.__kazeNetworkCount !== undefined) return;
+          window.__kazeNetworkCount = 0;
+          window.__kazeNetworkIdle = null;
+          const origFetch = window.fetch;
+          window.fetch = function() {
+            window.__kazeNetworkCount++;
+            window.__kazeNetworkIdle = null;
+            const p = origFetch.apply(this, arguments);
+            p.finally(function() {
+              window.__kazeNetworkCount = Math.max(0, window.__kazeNetworkCount - 1);
+            });
+            return p;
+          };
+          const origXHROpen = XMLHttpRequest.prototype.open;
+          const origXHRSend = XMLHttpRequest.prototype.send;
+          XMLHttpRequest.prototype.send = function() {
+            window.__kazeNetworkCount++;
+            window.__kazeNetworkIdle = null;
+            this.addEventListener('loadend', function() {
+              window.__kazeNetworkCount = Math.max(0, window.__kazeNetworkCount - 1);
+            });
+            return origXHRSend.apply(this, arguments);
+          };
+        })()`,
+      );
+
+      let idleStart: number | null = null;
+      while (Date.now() < deadline && !this._cancelled) {
+        const count = await this.adapter.evaluate(
+          this.contextId,
+          "window.__kazeNetworkCount === undefined ? 0 : window.__kazeNetworkCount",
+        ) as number;
+        if (Number(count) === 0) {
+          if (idleStart === null) idleStart = Date.now();
+          if (Date.now() - idleStart >= 500) return;
+        } else {
+          idleStart = null;
+        }
+        await delay(50);
+      }
+      if (this._cancelled) throw new Error(`Load state wait cancelled`);
+      throw new Error(`Timeout ${timeout}ms waiting for load state "${state}"`);
+    }
+
+    // load / domcontentloaded
+    const readyStateTarget = state === "load" ? "complete" : "interactive";
+    while (Date.now() < deadline && !this._cancelled) {
+      const readyState = await this.adapter.evaluate(
+        this.contextId,
+        "document.readyState",
+      ) as string;
+      if (String(readyState) === "complete") return;
+      if (readyStateTarget === "interactive" && (String(readyState) === "interactive" || String(readyState) === "complete")) return;
+      await delay(100);
+    }
+    if (this._cancelled) throw new Error(`Load state wait cancelled`);
+    throw new Error(`Timeout ${timeout}ms waiting for load state "${state}"`);
   }
 
   /** Create a Locator for elements matching `selector` within this page. */
@@ -447,6 +561,13 @@ export class Page {
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * AC-3 (Issue #36): Match a URL against a string (exact, glob, or RegExp) for waitForURL.
+ */
+function matchesUrlPattern(pattern: string | RegExp, url: string): boolean {
+  return matchesPattern(pattern, url);
 }
 
 /**

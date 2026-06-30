@@ -60,7 +60,8 @@ test('my test', async (page) => { ... });
 | `page.keyboard.press(key)` | Supported | Dispatches `keydown` + `keyup` events; e.g. `"Enter"`, `"Tab"`, `"Escape"` |
 | `page.evaluate(fn)` | Not supported (internal only) | Use `_evaluate` at your own risk |
 | `page.waitForNavigation()` | Not supported | — |
-| `page.waitForLoadState()` | Not supported | — |
+| `page.waitForURL(url, opts?)` | Supported | Accepts exact string, glob (`**`), or RegExp; polls every 100ms; default timeout 30000ms |
+| `page.waitForLoadState(state?, opts?)` | Supported | States: `load` (default), `domcontentloaded`, `networkidle` (500ms no-traffic); default timeout 30000ms |
 | `page.mouse` | Not supported | — |
 | `page.$$` / `page.$` | Not supported | Use `page.locator()` |
 | `page.setViewportSize()` | Not supported | — |
@@ -87,7 +88,8 @@ test('my test', async (page) => { ... });
 | `locator.first()` / `locator.last()` | Not supported | — |
 | `locator.filter()` | Not supported | — |
 | `locator.waitFor()` | Not supported | Use `page.waitForSelector()` |
-| `locator.getAttribute()` | Not supported | — |
+| `locator.getAttribute(name, opts?)` | Supported | auto-waiting; returns `null` when attribute absent; default timeout 30000ms |
+| `locator.innerText(opts?)` | Supported | auto-waiting; returns visible text only (`el.innerText`); default timeout 30000ms |
 
 ### `expect` matchers
 
@@ -118,7 +120,6 @@ test('my test', async (page) => { ... });
 ## Roadmap
 
 - `test.beforeEach` / `test.afterEach`
-- `locator.getAttribute()`
 - `expect(locator).toBeHidden()`
 - `expect(locator).toHaveAttribute()`
 - BiDi protocol support

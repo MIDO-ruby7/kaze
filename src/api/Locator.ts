@@ -242,6 +242,45 @@ export class Locator {
   }
 
   /**
+   * Return the value of the given attribute on the element.
+   * Returns null when the attribute is absent. Waits for the element to appear.
+   * AC-1 (Issue #36)
+   */
+  async getAttribute(name: string, opts?: { timeout?: number }): Promise<string | null> {
+    await this.page.waitForSelector(this.selector, opts);
+    const escapedSel = escapeSelector(this.selector);
+    const escapedName = name.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+    const result = await this.page._evaluate(
+      `(function() {
+        const el = document.querySelector('${escapedSel}');
+        if (!el) return null;
+        const val = el.getAttribute('${escapedName}');
+        return val === undefined ? null : val;
+      })()`,
+    );
+    if (result === null || result === undefined) return null;
+    return String(result);
+  }
+
+  /**
+   * Return the visible text (innerText) of the element.
+   * Waits for the element to appear.
+   * AC-2 (Issue #36)
+   */
+  async innerText(opts?: { timeout?: number }): Promise<string> {
+    await this.page.waitForSelector(this.selector, opts);
+    const escapedSel = escapeSelector(this.selector);
+    const result = await this.page._evaluate(
+      `(function() {
+        const el = document.querySelector('${escapedSel}');
+        if (!el) throw new Error('Element not found: ${escapedSel}');
+        return el.innerText;
+      })()`,
+    );
+    return String(result ?? "");
+  }
+
+  /**
    * Internal: evaluate JS with the selector in scope.
    * @internal
    */

@@ -331,6 +331,85 @@ describe("Locator", () => {
   });
 
   // -------------------------------------------------------------------------
+  // AC-1 (Issue #36): getAttribute()
+  // -------------------------------------------------------------------------
+  describe("getAttribute()", () => {
+    it("returns the attribute value when attribute exists", async () => {
+      (adapter.evaluate as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce(true)       // waitForSelector
+        .mockResolvedValueOnce("en");      // getAttribute evaluate
+      const value = await locator.getAttribute("lang");
+      expect(value).toBe("en");
+    });
+
+    it("returns null when attribute is absent", async () => {
+      (adapter.evaluate as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(null);
+      const value = await locator.getAttribute("data-nonexistent");
+      expect(value).toBeNull();
+    });
+
+    it("passes the attribute name into the evaluate expression", async () => {
+      (adapter.evaluate as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce("primary");
+      await locator.getAttribute("data-type");
+      const calls = (adapter.evaluate as ReturnType<typeof vi.fn>).mock.calls;
+      const expr = calls[1][1] as string;
+      expect(expr).toContain("getAttribute");
+      expect(expr).toContain("data-type");
+    });
+
+    it("accepts timeout option", async () => {
+      (adapter.evaluate as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce("value");
+      const result = await locator.getAttribute("href", { timeout: 5000 });
+      expect(result).toBe("value");
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // AC-2 (Issue #36): innerText()
+  // -------------------------------------------------------------------------
+  describe("innerText()", () => {
+    it("returns the visible text of the element", async () => {
+      (adapter.evaluate as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce(true)        // waitForSelector
+        .mockResolvedValueOnce("Hello");    // innerText evaluate
+      const text = await locator.innerText();
+      expect(text).toBe("Hello");
+    });
+
+    it("returns empty string when innerText is empty", async () => {
+      (adapter.evaluate as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce("");
+      const text = await locator.innerText();
+      expect(text).toBe("");
+    });
+
+    it("passes an innerText expression to evaluate", async () => {
+      (adapter.evaluate as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce("text");
+      await locator.innerText();
+      const calls = (adapter.evaluate as ReturnType<typeof vi.fn>).mock.calls;
+      const expr = calls[1][1] as string;
+      expect(expr).toContain("innerText");
+    });
+
+    it("accepts timeout option", async () => {
+      (adapter.evaluate as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce("content");
+      const text = await locator.innerText({ timeout: 5000 });
+      expect(text).toBe("content");
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // AC-1: inputValue()
   // -------------------------------------------------------------------------
   describe("inputValue()", () => {

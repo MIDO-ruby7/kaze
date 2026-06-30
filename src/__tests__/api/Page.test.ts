@@ -386,6 +386,92 @@ describe("Page", () => {
     });
   });
 
+  // -------------------------------------------------------------------------
+  // AC-3 (Issue #36): waitForURL()
+  // -------------------------------------------------------------------------
+  describe("waitForURL()", () => {
+    it("resolves immediately when current URL matches an exact string", async () => {
+      (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValue("https://example.com/home");
+      await expect(page.waitForURL("https://example.com/home")).resolves.toBeUndefined();
+    });
+
+    it("resolves when URL matches a glob pattern", async () => {
+      (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValue("https://example.com/home");
+      await expect(page.waitForURL("https://example.com/**")).resolves.toBeUndefined();
+    });
+
+    it("resolves when URL matches a RegExp", async () => {
+      (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValue("https://example.com/page/42");
+      await expect(page.waitForURL(/\/page\/\d+/)).resolves.toBeUndefined();
+    });
+
+    it("polls until URL changes and then resolves", async () => {
+      (adapter.evaluate as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce("https://example.com/old")
+        .mockResolvedValueOnce("https://example.com/new");
+      await expect(page.waitForURL("https://example.com/new")).resolves.toBeUndefined();
+    });
+
+    it("rejects when URL never matches within timeout", async () => {
+      (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValue("https://example.com/other");
+      await expect(
+        page.waitForURL("https://example.com/never", { timeout: 200 }),
+      ).rejects.toThrow(/Timeout.*waiting for URL/);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // AC-4 (Issue #36): waitForLoadState()
+  // -------------------------------------------------------------------------
+  describe("waitForLoadState()", () => {
+    it("resolves when readyState is complete (default 'load')", async () => {
+      (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValue("complete");
+      await expect(page.waitForLoadState()).resolves.toBeUndefined();
+    });
+
+    it("resolves for domcontentloaded when readyState is interactive", async () => {
+      (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValue("interactive");
+      await expect(page.waitForLoadState("domcontentloaded")).resolves.toBeUndefined();
+    });
+
+    it("resolves for domcontentloaded when readyState is complete", async () => {
+      (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValue("complete");
+      await expect(page.waitForLoadState("domcontentloaded")).resolves.toBeUndefined();
+    });
+
+    it("polls until readyState becomes complete", async () => {
+      (adapter.evaluate as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce("loading")
+        .mockResolvedValueOnce("complete");
+      await expect(page.waitForLoadState("load")).resolves.toBeUndefined();
+    });
+
+    it("rejects when readyState never reaches complete within timeout", async () => {
+      (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValue("loading");
+      await expect(
+        page.waitForLoadState("load", { timeout: 200 }),
+      ).rejects.toThrow(/Timeout.*waiting for load state/);
+    });
+
+    it("networkidle: resolves after 500ms of zero in-flight requests", async () => {
+      // First call: inject instrumentation (returns undefined)
+      // Subsequent calls: network count is 0
+      (adapter.evaluate as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce(undefined) // instrumentation injection
+        .mockResolvedValue(0);            // count always 0
+      await expect(page.waitForLoadState("networkidle", { timeout: 2000 })).resolves.toBeUndefined();
+    });
+
+    it("networkidle: rejects when requests never finish within timeout", async () => {
+      (adapter.evaluate as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce(undefined) // instrumentation injection
+        .mockResolvedValue(3);            // always 3 in-flight
+      await expect(
+        page.waitForLoadState("networkidle", { timeout: 200 }),
+      ).rejects.toThrow(/Timeout.*waiting for load state.*networkidle/);
+    });
+  });
+
   describe("selector escaping (B-1)", () => {
     it("fill escapes attribute selector with single quotes", async () => {
       // waitForSelector uses evaluate first (returns true), then fill evaluate
