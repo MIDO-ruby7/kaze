@@ -123,3 +123,6 @@ for (const count of TEST_COUNTS) {
 }
 
 console.log("\n=== 完了 ===\n");
+
+// Force-exit so lingering processes don't keep Node alive
+process.exit(0);

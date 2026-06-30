@@ -98,3 +98,6 @@ for (const workers of workerCounts) {
 }
 
 console.log("=== 完了 ===\n");
+
+// Force-exit so lingering processes don't keep Node alive
+process.exit(0);

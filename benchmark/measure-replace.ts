@@ -15,3 +15,6 @@ console.log(`context replacement: ${Math.round(elapsed)}ms`);
 
 pool.release(ctx2);
 await pool.close();
+
+// Force-exit so lingering processes don't keep Node alive
+process.exit(0);

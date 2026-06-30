@@ -189,3 +189,6 @@ writeFileSync(outPath, JSON.stringify(output, null, 2) + "\n");
 
 console.log(`\nResults written to benchmark/perf-results.json`);
 console.log(JSON.stringify(output, null, 2));
+
+// Force-exit so any lingering Chromium processes don't keep Node alive
+process.exit(0);

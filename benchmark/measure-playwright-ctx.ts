@@ -56,3 +56,6 @@ done();
 
 await ctx2.close();
 await browser.close();
+
+// Force-exit so lingering processes don't keep Node alive
+process.exit(0);

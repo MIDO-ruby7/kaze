@@ -44,3 +44,6 @@ for (const config of configs) {
   await pool.close();
   await new Promise<void>(r => setTimeout(r, 500)); // let ports release
 }
+
+// Force-exit so lingering processes don't keep Node alive
+process.exit(0);

@@ -103,3 +103,6 @@ for (const w of [10, 20, 50, 100, 300]) {
   console.log(`  ${String(w).padStart(4)} workers         → ${w} プロセス  (RAM: ~${(ram/1024).toFixed(1)}GB)`);
 }
 console.log("\n=== 完了 ===\n");
+
+// Force-exit so lingering processes don't keep Node alive
+process.exit(0);

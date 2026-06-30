@@ -50,3 +50,6 @@ results.forEach((r, i) => console.log(`  [${i+1}] ${r}`));
 
 pool.release(ctx);
 await pool.close();
+
+// Force-exit so lingering processes don't keep Node alive
+process.exit(0);

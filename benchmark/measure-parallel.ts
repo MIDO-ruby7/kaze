@@ -33,3 +33,6 @@ for (const N of [1, 5, 10, 20]) {
 }
 
 await pool.close();
+
+// Force-exit so lingering processes don't keep Node alive
+process.exit(0);

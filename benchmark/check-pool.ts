@@ -10,3 +10,6 @@ const pool = new BrowserPool();
 await pool.init();
 console.log("pool stats after init:", pool.stats());
 await pool.close();
+
+// Force-exit so lingering processes don't keep Node alive
+process.exit(0);
