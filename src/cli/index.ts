@@ -13,6 +13,7 @@
  *   kaze test src/features/           # backward compat
  */
 
+import * as os from "node:os";
 import * as path from "node:path";
 import { parseArgs } from "node:util";
 
@@ -141,8 +142,11 @@ const patterns = args; // may be empty → detect all spec files
     const reporterMode: ReporterMode = config.reporter === "dot" ? "dot" : "verbose";
     let htmlReporterEnabled = config.reporter === "html";
     // AC-2: default output dir is .kaze/report; override with --output-dir (GAP-3: resolve to absolute path)
-    const outputDir = values["output-dir"]
-      ? path.resolve(process.cwd(), values["output-dir"] as string)
+    const rawOutputDir = values["output-dir"] as string | undefined;
+    const outputDir = rawOutputDir
+      ? path.resolve(rawOutputDir.startsWith("~/")
+          ? os.homedir() + rawOutputDir.slice(1)
+          : rawOutputDir)
       : path.join(process.cwd(), ".kaze", "report");
 
     // B-1 / AC-8: --watch and --reporter=html are mutually incompatible; warn and disable HTML
