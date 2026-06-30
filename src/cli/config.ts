@@ -27,6 +27,8 @@ export interface KazeConfig {
   grepInvert?: string;
   /** Default number of retries for all tests. */
   retries?: number;
+  /** Shard specification: "index/total" string or object form (AC-4). */
+  shard?: string | { index: number; total: number };
 }
 
 // ---------------------------------------------------------------------------
@@ -137,6 +139,22 @@ function validateConfig(cfg: unknown): KazeConfig {
     result.retries = c.retries;
   }
 
+  if (c.shard !== undefined) {
+    const isString = typeof c.shard === "string";
+    const isObject =
+      typeof c.shard === "object" &&
+      c.shard !== null &&
+      typeof (c.shard as Record<string, unknown>).index === "number" &&
+      typeof (c.shard as Record<string, unknown>).total === "number";
+    if (!isString && !isObject) {
+      console.error(
+        `[kaze] Config error: "shard" must be a string like "1/3" or an object { index, total } (got ${JSON.stringify(c.shard)})`
+      );
+      process.exit(2);
+    }
+    result.shard = c.shard as KazeConfig["shard"];
+  }
+
   return result;
 }
 
@@ -186,6 +204,7 @@ export function mergeConfig(
   if (cliOverrides.grep !== undefined) result.grep = cliOverrides.grep;
   if (cliOverrides.grepInvert !== undefined) result.grepInvert = cliOverrides.grepInvert;
   if (cliOverrides.retries !== undefined) result.retries = cliOverrides.retries;
+  if (cliOverrides.shard !== undefined) result.shard = cliOverrides.shard;
 
   return result;
 }
