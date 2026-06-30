@@ -310,6 +310,82 @@ describe("Page", () => {
     });
   });
 
+  // -------------------------------------------------------------------------
+  // AC-2: title()
+  // -------------------------------------------------------------------------
+  describe("title()", () => {
+    it("returns the page title", async () => {
+      (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValueOnce("My Page");
+      const title = await page.title();
+      expect(title).toBe("My Page");
+    });
+
+    it("evaluates document.title", async () => {
+      (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValueOnce("Test");
+      await page.title();
+      const expr = (adapter.evaluate as ReturnType<typeof vi.fn>).mock.calls[0][1] as string;
+      expect(expr).toContain("document.title");
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // AC-2: keyboard.press()
+  // -------------------------------------------------------------------------
+  describe("keyboard.press()", () => {
+    it("dispatches a keyboard event for the given key", async () => {
+      (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValueOnce(undefined);
+      await page.keyboard.press("Enter");
+      const expr = (adapter.evaluate as ReturnType<typeof vi.fn>).mock.calls[0][1] as string;
+      expect(expr).toContain("Enter");
+    });
+
+    it("dispatches keydown and keyup events", async () => {
+      (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+      await page.keyboard.press("Tab");
+      expect(adapter.evaluate).toHaveBeenCalled();
+    });
+
+    // AC-9: keypress event and code property
+    it("dispatches keypress event in sequence keydown → keypress → keyup", async () => {
+      (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValueOnce(undefined);
+      await page.keyboard.press("a");
+      const expr = (adapter.evaluate as ReturnType<typeof vi.fn>).mock.calls[0][1] as string;
+      expect(expr).toContain("keydown");
+      expect(expr).toContain("keypress");
+      expect(expr).toContain("keyup");
+    });
+
+    it("sets code property on keyboard events", async () => {
+      (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValueOnce(undefined);
+      await page.keyboard.press("Enter");
+      const expr = (adapter.evaluate as ReturnType<typeof vi.fn>).mock.calls[0][1] as string;
+      expect(expr).toContain("code");
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // AC-2: screenshot()
+  // -------------------------------------------------------------------------
+  describe("screenshot()", () => {
+    it("returns a Buffer", async () => {
+      const fakeData = Buffer.from("fake-png-data");
+      (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValueOnce(
+        Array.from(fakeData),
+      );
+      const buf = await page.screenshot();
+      expect(Buffer.isBuffer(buf)).toBe(true);
+    });
+
+    it("calls adapter screenshot when available", async () => {
+      const screenshotMock = vi.fn().mockResolvedValueOnce(Buffer.from("png"));
+      const adapterWithScreenshot = makeAdapter({ screenshot: screenshotMock } as Partial<ProtocolAdapter>);
+      const localPage = createPage(adapterWithScreenshot, { contextId: "ctx-ss", adapterId: "a-1" });
+      const result = await localPage.screenshot();
+      expect(screenshotMock).toHaveBeenCalledWith("ctx-ss");
+      expect(Buffer.isBuffer(result)).toBe(true);
+    });
+  });
+
   describe("selector escaping (B-1)", () => {
     it("fill escapes attribute selector with single quotes", async () => {
       // waitForSelector uses evaluate first (returns true), then fill evaluate

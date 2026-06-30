@@ -21,10 +21,16 @@ const POLL_INTERVAL_MS = 100;
 export interface LocatorMatchers {
   toHaveText(expected: string, opts?: { timeout?: number }): Promise<void>;
   toBeVisible(opts?: { timeout?: number }): Promise<void>;
+  toBeChecked(opts?: { timeout?: number }): Promise<void>;
+  toBeEnabled(opts?: { timeout?: number }): Promise<void>;
+  toBeDisabled(opts?: { timeout?: number }): Promise<void>;
+  toHaveValue(expected: string, opts?: { timeout?: number }): Promise<void>;
+  toHaveCount(expected: number, opts?: { timeout?: number }): Promise<void>;
 }
 
 export interface PageMatchers {
   toHaveURL(expected: string | RegExp, opts?: { timeout?: number }): Promise<void>;
+  toHaveTitle(expected: string | RegExp, opts?: { timeout?: number }): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -94,6 +100,172 @@ class LocatorExpect implements LocatorMatchers {
         `  Timeout: ${timeout}ms`,
     );
   }
+
+  /**
+   * Assert that a checkbox/radio is checked. Auto-retries.
+   * AC-3 (Issue #31)
+   */
+  async toBeChecked(opts?: { timeout?: number }): Promise<void> {
+    const timeout = opts?.timeout ?? DEFAULT_TIMEOUT_MS;
+    const deadline = Date.now() + timeout;
+
+    while (Date.now() < deadline) {
+      try {
+        const result = await this.locator._evaluate(
+          `(function() {
+            const el = document.querySelector('${escapeSelector(this.locator.selector)}');
+            return el ? el.checked === true : false;
+          })()`,
+        );
+        if (result === true) return;
+      } catch {
+        // keep retrying
+      }
+      await delay(POLL_INTERVAL_MS);
+    }
+
+    throw new AssertionError(
+      `expect(locator).toBeChecked()\n` +
+        `  Selector: ${this.locator.selector}\n` +
+        `  Expected element to be checked\n` +
+        `  Timeout: ${timeout}ms`,
+    );
+  }
+
+  /**
+   * Assert that an element is enabled (not disabled). Auto-retries.
+   * AC-3 (Issue #31)
+   */
+  async toBeEnabled(opts?: { timeout?: number }): Promise<void> {
+    const timeout = opts?.timeout ?? DEFAULT_TIMEOUT_MS;
+    const deadline = Date.now() + timeout;
+
+    while (Date.now() < deadline) {
+      try {
+        const result = await this.locator._evaluate(
+          `(function() {
+            const el = document.querySelector('${escapeSelector(this.locator.selector)}');
+            return el ? !el.disabled : false;
+          })()`,
+        );
+        if (result === true) return;
+      } catch {
+        // keep retrying
+      }
+      await delay(POLL_INTERVAL_MS);
+    }
+
+    throw new AssertionError(
+      `expect(locator).toBeEnabled()\n` +
+        `  Selector: ${this.locator.selector}\n` +
+        `  Expected element to be enabled\n` +
+        `  Timeout: ${timeout}ms`,
+    );
+  }
+
+  /**
+   * Assert that an element is disabled. Auto-retries.
+   * AC-3 / AC-11 (Issue #31): also throws if element is not found.
+   */
+  async toBeDisabled(opts?: { timeout?: number }): Promise<void> {
+    const timeout = opts?.timeout ?? DEFAULT_TIMEOUT_MS;
+    const deadline = Date.now() + timeout;
+
+    let lastResult: { found: boolean; disabled: boolean } | null = null;
+
+    while (Date.now() < deadline) {
+      try {
+        const result = await this.locator._evaluate(
+          `(function() {
+            const el = document.querySelector('${escapeSelector(this.locator.selector)}');
+            if (!el) return { found: false, disabled: false };
+            return { found: true, disabled: el.disabled === true };
+          })()`,
+        ) as { found: boolean; disabled: boolean };
+        lastResult = result;
+        if (result.found && result.disabled) return;
+        // Element found but not disabled — keep retrying until timeout
+        // Element not found — keep retrying until timeout
+      } catch {
+        // keep retrying
+      }
+      await delay(POLL_INTERVAL_MS);
+    }
+
+    if (lastResult !== null && !lastResult.found) {
+      throw new AssertionError(
+        `expect(locator).toBeDisabled()\n` +
+          `  Selector: ${this.locator.selector}\n` +
+          `  Element not found\n` +
+          `  Timeout: ${timeout}ms`,
+      );
+    }
+
+    throw new AssertionError(
+      `expect(locator).toBeDisabled()\n` +
+        `  Selector: ${this.locator.selector}\n` +
+        `  Expected element to be disabled\n` +
+        `  Timeout: ${timeout}ms`,
+    );
+  }
+
+  /**
+   * Assert that an input/textarea has the given value. Auto-retries.
+   * AC-3 (Issue #31)
+   */
+  async toHaveValue(expected: string, opts?: { timeout?: number }): Promise<void> {
+    const timeout = opts?.timeout ?? DEFAULT_TIMEOUT_MS;
+    const deadline = Date.now() + timeout;
+    let lastActual: string | null = null;
+
+    while (Date.now() < deadline) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) break;
+      try {
+        lastActual = await this.locator.inputValue({ timeout: POLL_INTERVAL_MS });
+        if (lastActual === expected) return;
+      } catch {
+        // keep retrying
+      }
+      await delay(POLL_INTERVAL_MS);
+    }
+
+    throw new AssertionError(
+      `expect(locator).toHaveValue(${JSON.stringify(expected)})\n` +
+        `  Selector: ${this.locator.selector}\n` +
+        `  Expected value: ${JSON.stringify(expected)}\n` +
+        `  Received:       ${JSON.stringify(lastActual)}\n` +
+        `  Timeout: ${timeout}ms`,
+    );
+  }
+
+  /**
+   * Assert that the selector matches exactly n elements. Auto-retries.
+   * AC-3 (Issue #31)
+   */
+  async toHaveCount(expected: number, opts?: { timeout?: number }): Promise<void> {
+    const timeout = opts?.timeout ?? DEFAULT_TIMEOUT_MS;
+    const deadline = Date.now() + timeout;
+    let lastActual = -1;
+
+    while (Date.now() < deadline) {
+      try {
+        lastActual = await this.locator.count();
+        if (lastActual === expected) return;
+      } catch {
+        // keep retrying
+      }
+      await delay(POLL_INTERVAL_MS);
+    }
+
+    throw new AssertionError(
+      `expect(locator).toHaveCount(${expected})\n` +
+        `  Selector: ${this.locator.selector}\n` +
+        `  Expected count: ${expected}\n` +
+        `  Received:       ${lastActual}\n` +
+        `  Timeout: ${timeout}ms`,
+    );
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -128,6 +300,38 @@ class PageExpect implements PageMatchers {
       `expect(page).toHaveURL(${String(expected)})\n` +
         `  Expected URL: ${String(expected)}\n` +
         `  Received URL: ${lastUrl}\n` +
+        `  Timeout: ${timeout}ms`,
+    );
+  }
+
+  /**
+   * Assert that the page title matches. Auto-retries.
+   * AC-3 (Issue #31)
+   */
+  async toHaveTitle(
+    expected: string | RegExp,
+    opts?: { timeout?: number },
+  ): Promise<void> {
+    const timeout = opts?.timeout ?? DEFAULT_TIMEOUT_MS;
+    const deadline = Date.now() + timeout;
+    let lastTitle = "";
+
+    while (Date.now() < deadline) {
+      try {
+        lastTitle = await this.page.title();
+        if (typeof expected === "string" ? lastTitle === expected : expected.test(lastTitle)) {
+          return;
+        }
+      } catch {
+        // keep retrying
+      }
+      await delay(POLL_INTERVAL_MS);
+    }
+
+    throw new AssertionError(
+      `expect(page).toHaveTitle(${String(expected)})\n` +
+        `  Expected title: ${String(expected)}\n` +
+        `  Received title: ${lastTitle}\n` +
         `  Timeout: ${timeout}ms`,
     );
   }
