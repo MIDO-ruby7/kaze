@@ -19,6 +19,7 @@ import { run } from "./runner.js";
 import { report } from "./reporter.js";
 import { watch } from "./watcher.js";
 import { loadConfig, mergeConfig } from "./config.js";
+import { writeHtmlReport } from "./html-reporter.js";
 import type { ReporterMode } from "./reporter.js";
 
 // ---------------------------------------------------------------------------
@@ -31,6 +32,7 @@ const { values, positionals } = parseArgs({
     workers: { type: "string" },
     timeout: { type: "string" },
     reporter: { type: "string" },
+    "output-dir": { type: "string" },
     watch: { type: "boolean", short: "w", default: false },
     screenshot: { type: "string" },
     grep: { type: "string" },
@@ -54,7 +56,8 @@ Usage:
 Options:
   --workers=N              Max parallel workers (or KAZE_WORKERS env var)
   --timeout=N              Per-test timeout in ms (default: 30000)
-  --reporter=MODE          Output mode: verbose (default) | dot
+  --reporter=MODE          Output mode: verbose (default) | dot | html
+  --output-dir=PATH        Output directory for HTML report (default: .kaze/report)
   --screenshot=off         Disable auto-screenshot on failure/timeout
   --grep=PATTERN           Only run tests matching regex pattern
   --grep-invert=PATTERN    Skip tests matching regex pattern
@@ -104,7 +107,7 @@ const patterns = args; // may be empty → detect all spec files
     const cliTimeout =
       typeof values.timeout === "string" ? parseInt(values.timeout, 10) : undefined;
     const cliReporter =
-      values.reporter === "dot" || values.reporter === "verbose"
+      values.reporter === "dot" || values.reporter === "verbose" || values.reporter === "html"
         ? values.reporter
         : undefined;
     // --screenshot=off → false; --screenshot=on → true; absent/other → undefined (defer to config)
@@ -133,7 +136,14 @@ const patterns = args; // may be empty → detect all spec files
     });
 
     const watchMode = values.watch === true;
+    // AC-1: html reporter also runs verbose to stdout (AC-5)
     const reporterMode: ReporterMode = config.reporter === "dot" ? "dot" : "verbose";
+    const htmlReporterEnabled = config.reporter === "html";
+    // AC-2: default output dir is .kaze/report; override with --output-dir
+    const outputDir =
+      typeof values["output-dir"] === "string"
+        ? values["output-dir"]
+        : ".kaze/report";
 
     // testMatch from config is used only when no positional patterns are given (AC-2)
     const effectivePatterns =
@@ -204,6 +214,17 @@ const patterns = args; // may be empty → detect all spec files
     });
 
     const summary = report(results, reporterMode, resolvedShard);
+
+    // AC-1/AC-2: write HTML report when --reporter=html or config reporter: "html"
+    if (htmlReporterEnabled) {
+      const resolvedOutputDir = outputDir.startsWith("/")
+        ? outputDir
+        : `${process.cwd()}/${outputDir}`;
+      const reportPath = await writeHtmlReport(results, resolvedOutputDir, {
+        duration: summary.totalMs,
+      });
+      console.log(`[kaze] HTML report written to ${reportPath}`);
+    }
 
     // Exit code: 1 if any failures or timeouts
     if (summary.failed > 0 || summary.timedOut > 0) {

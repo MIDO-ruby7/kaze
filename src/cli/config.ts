@@ -18,7 +18,7 @@ import { pathToFileURL } from "node:url";
 export interface KazeConfig {
   workers?: number;
   timeout?: number;
-  reporter?: "verbose" | "dot";
+  reporter?: "verbose" | "dot" | "html";
   testMatch?: string[];
   screenshot?: boolean;
   /** Regex pattern: only run tests whose name matches. */
@@ -73,13 +73,13 @@ function validateConfig(cfg: unknown): KazeConfig {
   }
 
   if (c.reporter !== undefined) {
-    if (c.reporter !== "verbose" && c.reporter !== "dot") {
+    if (c.reporter !== "verbose" && c.reporter !== "dot" && c.reporter !== "html") {
       console.error(
-        `[kaze] Config error: "reporter" must be "verbose" or "dot" (got ${JSON.stringify(c.reporter)})`
+        `[kaze] Config error: "reporter" must be "verbose", "dot", or "html" (got ${JSON.stringify(c.reporter)})`
       );
       process.exit(2);
     }
-    result.reporter = c.reporter;
+    result.reporter = c.reporter as "verbose" | "dot" | "html";
   }
 
   if (c.screenshot !== undefined) {
