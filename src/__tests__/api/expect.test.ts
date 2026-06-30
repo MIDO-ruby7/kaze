@@ -242,6 +242,13 @@ describe("expect(locator).toHaveCount", () => {
       expect(locator).toHaveCount(5, { timeout: 200 }),
     ).rejects.toBeInstanceOf(AssertionError);
   });
+
+  it("toHaveCount(0) resolves when element disappears", async () => {
+    // count() returning 0 is a valid expectation (element not present / removed from DOM)
+    (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValueOnce(0);
+    const locator = page.locator("li");
+    await vitestExpect(expect(locator).toHaveCount(0)).resolves.toBeUndefined();
+  });
 });
 
 describe("expect(page).toHaveURL", () => {

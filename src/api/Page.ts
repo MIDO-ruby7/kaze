@@ -262,8 +262,10 @@ export class Page {
       await this.adapter.evaluate(
         this.contextId,
         `(function() {
-          const opts = { key: '${escapedKey}', bubbles: true, cancelable: true };
+          const keyCode = '${escapedKey}'.length === 1 ? '${escapedKey}'.charCodeAt(0) : 0;
+          const opts = { key: '${escapedKey}', code: '${escapedKey}', keyCode: keyCode, bubbles: true, cancelable: true };
           document.dispatchEvent(new KeyboardEvent('keydown', opts));
+          document.dispatchEvent(new KeyboardEvent('keypress', opts));
           document.dispatchEvent(new KeyboardEvent('keyup', opts));
         })()`,
       );

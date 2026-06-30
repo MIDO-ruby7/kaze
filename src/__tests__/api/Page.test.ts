@@ -344,6 +344,23 @@ describe("Page", () => {
       await page.keyboard.press("Tab");
       expect(adapter.evaluate).toHaveBeenCalled();
     });
+
+    // AC-9: keypress event and code property
+    it("dispatches keypress event in sequence keydown → keypress → keyup", async () => {
+      (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValueOnce(undefined);
+      await page.keyboard.press("a");
+      const expr = (adapter.evaluate as ReturnType<typeof vi.fn>).mock.calls[0][1] as string;
+      expect(expr).toContain("keydown");
+      expect(expr).toContain("keypress");
+      expect(expr).toContain("keyup");
+    });
+
+    it("sets code property on keyboard events", async () => {
+      (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValueOnce(undefined);
+      await page.keyboard.press("Enter");
+      const expr = (adapter.evaluate as ReturnType<typeof vi.fn>).mock.calls[0][1] as string;
+      expect(expr).toContain("code");
+    });
   });
 
   // -------------------------------------------------------------------------

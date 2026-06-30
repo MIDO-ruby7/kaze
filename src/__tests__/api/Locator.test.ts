@@ -144,12 +144,30 @@ describe("Locator", () => {
   // AC-1: all()
   // -------------------------------------------------------------------------
   describe("all()", () => {
-    it("returns an array of Locators with nth selectors", async () => {
-      (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValueOnce(2);
+    it("returns an array of Locators using data-kaze-idx selectors", async () => {
+      // First evaluate: count() → 2
+      // Second evaluate: attribute assignment (returns undefined)
+      (adapter.evaluate as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce(2)
+        .mockResolvedValueOnce(undefined);
       const locators = await locator.all();
       expect(locators).toHaveLength(2);
       expect(locators[0]).toBeInstanceOf(Locator);
       expect(locators[1]).toBeInstanceOf(Locator);
+      // Each Locator should use data-kaze-idx attribute to target the correct element
+      expect(locators[0].selector).toBe('[data-kaze-idx="0"]');
+      expect(locators[1].selector).toBe('[data-kaze-idx="1"]');
+    });
+
+    it("passes a script that assigns data-kaze-idx attributes", async () => {
+      (adapter.evaluate as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce(1)
+        .mockResolvedValueOnce(undefined);
+      await locator.all();
+      const calls = (adapter.evaluate as ReturnType<typeof vi.fn>).mock.calls;
+      const attrScript = calls[1][1] as string;
+      expect(attrScript).toContain("data-kaze-idx");
+      expect(attrScript).toContain("querySelectorAll");
     });
 
     it("returns empty array when count is 0", async () => {
@@ -226,6 +244,25 @@ describe("Locator", () => {
       const calls = (adapter.evaluate as ReturnType<typeof vi.fn>).mock.calls;
       const expr = calls[1][1] as string;
       expect(expr).toContain("Apple");
+    });
+
+    // AC-8: non-existent option throws
+    it("throws when option value does not exist (string)", async () => {
+      (adapter.evaluate as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce(true)
+        .mockRejectedValueOnce(new Error('Option not found for selector "#result" with value "nonexistent"'));
+      await expect(locator.selectOption("nonexistent")).rejects.toThrow("Option not found");
+    });
+
+    it("generated script throws when option not found by value", async () => {
+      (adapter.evaluate as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(undefined);
+      await locator.selectOption("apple");
+      const calls = (adapter.evaluate as ReturnType<typeof vi.fn>).mock.calls;
+      const expr = calls[1][1] as string;
+      // Script must contain a throw for the not-found case
+      expect(expr).toContain("throw new Error");
     });
   });
 

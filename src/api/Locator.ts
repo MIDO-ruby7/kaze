@@ -68,12 +68,27 @@ export class Locator {
 
   /**
    * Return all matching elements as an array of Locators.
-   * AC-1 (Issue #31)
+   * AC-7 (Issue #31): Each returned Locator resolves to querySelectorAll(selector)[i]
+   * regardless of sibling structure. Uses data-kaze-idx attributes to uniquely
+   * identify each matched element by index rather than CSS :nth-child position.
    */
   async all(): Promise<Locator[]> {
     const n = await this.count();
+    if (n === 0) return [];
+
+    const escapedSel = escapeSelector(this.selector);
+    // Assign a unique data-kaze-idx attribute to each matched element so that
+    // each returned Locator can target it precisely via [data-kaze-idx="i"].
+    // This avoids :nth-child which is sibling-position-based, not match-index-based.
+    await this.page._evaluate(
+      `(function() {
+        const els = document.querySelectorAll('${escapedSel}');
+        els.forEach(function(el, i) { el.setAttribute('data-kaze-idx', String(i)); });
+      })()`,
+    );
+
     return Array.from({ length: n }, (_, i) =>
-      new Locator(this.page, `${this.selector}:nth-child(${i + 1})`),
+      new Locator(this.page, `[data-kaze-idx="${i}"]`),
     );
   }
 
@@ -138,7 +153,8 @@ export class Locator {
         const el = document.querySelector('${escapedSel}');
         if (!el) throw new Error('Element not found: ${escapedSel}');
         const opt = Array.from(el.options).find(o => o.value === '${escapedValue}');
-        if (opt) opt.selected = true;
+        if (!opt) throw new Error('Option not found for selector "${escapedSel}" with value "${escapedValue}"');
+        opt.selected = true;
         el.dispatchEvent(new Event('change', { bubbles: true }));
       })()`;
     } else if (value.label !== undefined) {
@@ -147,7 +163,8 @@ export class Locator {
         const el = document.querySelector('${escapedSel}');
         if (!el) throw new Error('Element not found: ${escapedSel}');
         const opt = Array.from(el.options).find(o => o.text === '${escapedLabel}');
-        if (opt) opt.selected = true;
+        if (!opt) throw new Error('Option not found for selector "${escapedSel}" with label "${escapedLabel}"');
+        opt.selected = true;
         el.dispatchEvent(new Event('change', { bubbles: true }));
       })()`;
     } else {
@@ -156,7 +173,8 @@ export class Locator {
         const el = document.querySelector('${escapedSel}');
         if (!el) throw new Error('Element not found: ${escapedSel}');
         const opt = Array.from(el.options).find(o => o.value === '${escapedValue}');
-        if (opt) opt.selected = true;
+        if (!opt) throw new Error('Option not found for selector "${escapedSel}" with value "${escapedValue}"');
+        opt.selected = true;
         el.dispatchEvent(new Event('change', { bubbles: true }));
       })()`;
     }
