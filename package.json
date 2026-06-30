@@ -1,9 +1,21 @@
 {
-  "name": "kaze",
-  "version": "0.0.1",
-  "description": "Playwright-less browser automation toolkit",
-  "type": "module",
+  "name": "@midori/kaze",
+  "version": "0.1.0",
+  "description": "Fast, lightweight browser automation and E2E testing toolkit — a Playwright alternative built on Chrome DevTools Protocol",
+  "keywords": ["e2e", "testing", "playwright", "browser", "automation"],
+  "homepage": "https://github.com/MIDO-ruby7/kaze",
+  "bugs": {
+    "url": "https://github.com/MIDO-ruby7/kaze/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/MIDO-ruby7/kaze"
+  },
   "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "module",
   "packageManager": "pnpm@9.0.0",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -14,10 +26,20 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "bin",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "engines": {
     "node": ">=22"
+  },
+  "peerDependencies": {
+    "tsx": ">=4"
+  },
+  "peerDependenciesMeta": {
+    "tsx": { "optional": true }
   },
   "bin": { "kaze": "./bin/kaze.js" },
   "scripts": {

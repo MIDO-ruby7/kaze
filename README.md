@@ -1,6 +1,39 @@
 # kaze
 
-Playwright-less browser automation toolkit.
+Fast, lightweight browser automation and E2E testing toolkit — a Playwright alternative built on Chrome DevTools Protocol.
+
+## Getting Started
+
+### Installation
+
+```bash
+npm install @midori/kaze
+# or
+pnpm add @midori/kaze
+```
+
+### Basic Usage
+
+Create a `kaze.config.ts` in your project root:
+
+```typescript
+import { defineConfig } from "@midori/kaze"
+
+export default defineConfig({
+  workers: 4,
+  timeout: 30000,
+  reporter: "verbose",
+  testMatch: ["tests/**/*.spec.ts"],
+})
+```
+
+Then run your tests:
+
+```bash
+npx kaze
+# or
+pnpm kaze
+```
 
 ## Development
 
@@ -39,7 +72,7 @@ pnpm install && pnpm test
 プロジェクトルートに `kaze.config.ts` を作成すると設定を永続化できます。
 
 ```typescript
-import { defineConfig } from "kaze"
+import { defineConfig } from "@midori/kaze"
 export default defineConfig({
   workers: 20,
   timeout: 60000,
@@ -54,6 +87,7 @@ export default defineConfig({
 | `workers` | `number` (正の整数) | システム依存 | 並列ワーカー数 |
 | `timeout` | `number` (正の整数, ms) | `30000` | テストごとのタイムアウト |
 | `reporter` | `"verbose" \| "dot" \| "html"` | `"verbose"` | 出力フォーマット |
+| `prewarm` | `boolean` | `true` | Context をリリース後に即リセット開始してテスト間の待機時間をゼロに近づける |
 | `testMatch` | `string[]` | 自動検出 | 実行対象のグロブパターン |
 | `screenshot` | `boolean` | `true` | 失敗・タイムアウト時のスクリーンショット |
 | `grep` | `string` | — | テスト名の正規表現フィルタ |
@@ -86,6 +120,9 @@ jobs:
 テストが失敗・タイムアウトすると自動で `.kaze/screenshots/` に保存されます。
 `kaze --screenshot=off` で無効化できます。
 `.kaze/` は `.gitignore` に含まれています。
+
+> **Note**: To run TypeScript spec files, install `tsx` as a dev dependency:
+> `pnpm add -D tsx`
 
 ## License
 

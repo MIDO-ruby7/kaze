@@ -502,7 +502,8 @@ describe("AC-14: release() calls _onReset before adapter.resetContext()", () => 
     // We cannot reassign the module-level vi.mock, so we manipulate the
     // adapter instance after it is created by the pool.
     const pool = new BrowserPool();
-    await pool.init({ maxProcesses: 1, maxContextsPerProcess: 1 });
+    // prewarm: false so only one resetContext call happens (the regular release reset)
+    await pool.init({ maxProcesses: 1, maxContextsPerProcess: 1, prewarm: false });
 
     // The adapter created during init is in createdAdapters[last].
     const adapter = createdAdapters[createdAdapters.length - 1]!;
@@ -538,7 +539,8 @@ describe("AC-14: release() calls _onReset before adapter.resetContext()", () => 
 
   it("release() without _onReset still calls resetContext", async () => {
     const pool = new BrowserPool();
-    await pool.init({ maxProcesses: 1, maxContextsPerProcess: 1 });
+    // prewarm: false so only one resetContext call happens (the regular release reset)
+    await pool.init({ maxProcesses: 1, maxContextsPerProcess: 1, prewarm: false });
 
     const adapter = createdAdapters[createdAdapters.length - 1]!;
     const resetContextSpy = vi.fn().mockResolvedValue(undefined);
@@ -628,5 +630,155 @@ describe("Context isolation (Approach B: replace context on release)", () => {
     expect(ctx2.contextId).not.toBe(ctx1.contextId);
     pool.release(ctx2);
     await pool.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AC-1..5 (Issue #37): Context prewarming
+// ---------------------------------------------------------------------------
+
+describe("Issue #37: Context prewarming", () => {
+  it("AC-2: acquire() returns immediately when a warmed context is available", async () => {
+    const pool = new BrowserPool();
+    // Attach a resetContext mock so prewarm can run
+    const adapter = (() => {
+      // Will be set after init
+      let _adapter: MockAdapter | undefined;
+      return {
+        get() { return _adapter; },
+        set(a: MockAdapter) { _adapter = a; },
+      };
+    })();
+
+    await pool.init({ maxProcesses: 1, maxContextsPerProcess: 1, prewarm: true });
+    const a = createdAdapters[createdAdapters.length - 1]!;
+    adapter.set(a);
+
+    // Attach resetContext to track calls
+    let resetCount = 0;
+    (a as unknown as Record<string, unknown>).resetContext = vi.fn().mockImplementation(() => {
+      resetCount++;
+      return Promise.resolve();
+    });
+
+    // acquire + release to trigger prewarm
+    const ctx = await pool.acquire();
+    pool.release(ctx);
+
+    // Wait for _replaceContext (regular reset) + warmNext (prewarm) to complete
+    await new Promise<void>((r) => setTimeout(r, 100));
+
+    // At this point the context should be "warm" — acquire() must resolve without
+    // triggering another resetContext.
+    const resetCountBefore = resetCount;
+    const ctx2 = await pool.acquire();
+    expect(ctx2).toBeDefined();
+    // No additional resetContext call should have happened during acquire()
+    expect(resetCount).toBe(resetCountBefore);
+
+    pool.release(ctx2);
+    await pool.close();
+  });
+
+  it("AC-3: prewarm defaults to true — fires an extra resetContext after release", async () => {
+    // With prewarm: true (default), after _replaceContext completes a second
+    // resetContext is fired to warm the slot for the next acquire().
+    const pool = new BrowserPool();
+    await pool.init({ maxProcesses: 1, maxContextsPerProcess: 1 }); // default prewarm: true
+
+    const a = createdAdapters[createdAdapters.length - 1]!;
+    let resetCount = 0;
+    (a as unknown as Record<string, unknown>).resetContext = vi.fn().mockImplementation(() => {
+      resetCount++;
+      return Promise.resolve();
+    });
+
+    const ctx = await pool.acquire();
+    pool.release(ctx);
+
+    // Wait for _replaceContext (reset 1) + warmNext (reset 2) to complete
+    await new Promise<void>((r) => setTimeout(r, 150));
+
+    // 2 resetContext calls: 1 regular + 1 prewarm
+    expect(resetCount).toBe(2);
+
+    await pool.close();
+  });
+
+  it("AC-3: prewarm: false suppresses the extra prewarm resetContext", async () => {
+    // With prewarm: false, no extra resetContext is fired after _replaceContext
+    const pool = new BrowserPool();
+    await pool.init({ maxProcesses: 1, maxContextsPerProcess: 1, prewarm: false });
+
+    const a = createdAdapters[createdAdapters.length - 1]!;
+    let resetCount = 0;
+    (a as unknown as Record<string, unknown>).resetContext = vi.fn().mockImplementation(() => {
+      resetCount++;
+      return Promise.resolve();
+    });
+
+    const ctx = await pool.acquire();
+    pool.release(ctx);
+
+    // Wait for _replaceContext to complete (1 reset) plus extra time for any
+    // unwanted prewarm that should NOT happen
+    await new Promise<void>((r) => setTimeout(r, 150));
+
+    // Only 1 resetContext call: the regular release reset. No prewarm.
+    expect(resetCount).toBe(1);
+
+    await pool.close();
+  });
+
+  it("AC-4: prewarm error falls back gracefully — acquire() still succeeds", async () => {
+    const pool = new BrowserPool();
+    await pool.init({ maxProcesses: 1, maxContextsPerProcess: 1, prewarm: true });
+
+    const a = createdAdapters[createdAdapters.length - 1]!;
+    let callCount = 0;
+    (a as unknown as Record<string, unknown>).resetContext = vi.fn().mockImplementation(() => {
+      callCount++;
+      if (callCount === 2) {
+        // Prewarm attempt fails
+        return Promise.reject(new Error("prewarm failed"));
+      }
+      return Promise.resolve();
+    });
+
+    const ctx = await pool.acquire();
+    pool.release(ctx);
+
+    // Wait for both _replaceContext and failed warmNext to settle
+    await new Promise<void>((r) => setTimeout(r, 150));
+
+    // acquire() should still succeed (fallback to normal reset on next acquire)
+    const ctx2 = await pool.acquire();
+    expect(ctx2).toBeDefined();
+
+    pool.release(ctx2);
+    await pool.close();
+  });
+
+  it("AC-9: close() awaits in-flight warmPromise before closing adapters", async () => {
+    const pool = new BrowserPool();
+    await pool.init({ maxProcesses: 1, maxContextsPerProcess: 1, prewarm: true });
+
+    const ctx = await pool.acquire();
+
+    // Give the pool a slow resetContext so warmPromise is in-flight
+    // (mock the adapter's resetContext to take 50ms)
+    const adapter = createdAdapters[createdAdapters.length - 1]!;
+    let warmingDone = false;
+    (adapter as unknown as Record<string, unknown>).resetContext = vi.fn().mockImplementation(() =>
+      new Promise<void>(r => setTimeout(() => { warmingDone = true; r(); }, 50))
+    );
+
+    pool.release(ctx); // starts _warmContext async
+
+    // Close immediately (warmPromise should be in-flight)
+    await pool.close();
+
+    // After close, warming should have completed (allSettled awaited it)
+    expect(warmingDone).toBe(true);
   });
 });
