@@ -58,8 +58,26 @@ export default defineConfig({
 | `screenshot` | `boolean` | `true` | 失敗・タイムアウト時のスクリーンショット |
 | `grep` | `string` | — | テスト名の正規表現フィルタ |
 | `grepInvert` | `string` | — | テスト名の除外フィルタ |
+| `shard` | `string \| { index: number; total: number }` | — | CI 並列実行用シャード指定 (例: `"1/4"`) |
 
 CLI フラグは常に設定ファイルより優先されます。例: 設定に `screenshot: false` があっても `kaze --screenshot=on` で有効化できます。
+
+## CI でのシャーディング
+
+複数マシンにテストを分散実行できます:
+
+```yaml
+# .github/workflows/test.yml
+jobs:
+  test:
+    strategy:
+      matrix:
+        shard: ["1/4", "2/4", "3/4", "4/4"]
+    steps:
+      - run: npx kaze --shard=${{ matrix.shard }}
+```
+
+`--shard` と `--watch` は同時に使用できません。
 
 ## スクリーンショット
 

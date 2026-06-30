@@ -7,18 +7,25 @@
  * AC-4: shard can be set in kaze.config.ts
  * AC-5: verbose reporter shows [Shard 1/3] prefix
  * AC-6: unit tests (this file)
+ * AC-8: --shard and --watch are mutually exclusive (exit 1)
+ * AC-9: out-of-range shard values are caught at CLI level (exit 2)
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 import { shardFiles } from "../../cli/runner.js";
 import { loadConfig, mergeConfig } from "../../cli/config.js";
 import type { KazeConfig } from "../../cli/config.js";
 import { report } from "../../cli/reporter.js";
 import type { TestResult } from "../../scheduler/types.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const CLI_ENTRY = path.resolve(__dirname, "../../cli/index.ts");
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -230,5 +237,79 @@ describe("report with shard info (AC-5)", () => {
       logSpy.mockRestore();
       writeSpy.mockRestore();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AC-8: --shard and --watch are mutually exclusive
+// ---------------------------------------------------------------------------
+
+describe("AC-8: --shard and --watch mutual exclusion", () => {
+  function runCLI(args: string[]): { status: number | null; stderr: string } {
+    const result = spawnSync(
+      process.execPath,
+      ["--import", "tsx/esm", CLI_ENTRY, ...args],
+      {
+        encoding: "utf8",
+        env: { ...process.env, KAZE_SKIP_E2E: "1" },
+        timeout: 10000,
+      }
+    );
+    return {
+      status: result.status,
+      stderr: result.stderr ?? "",
+    };
+  }
+
+  it("exits with code 1 and prints error when --watch and --shard are combined", () => {
+    const { status, stderr } = runCLI(["--watch", "--shard=1/3"]);
+    expect(status).toBe(1);
+    expect(stderr).toContain("[kaze] --shard cannot be used with --watch");
+  });
+
+  it("exits with code 1 regardless of shard order (--shard before --watch)", () => {
+    const { status, stderr } = runCLI(["--shard=2/4", "--watch"]);
+    expect(status).toBe(1);
+    expect(stderr).toContain("[kaze] --shard cannot be used with --watch");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AC-9: out-of-range shard values detected at CLI level (exit 2)
+// ---------------------------------------------------------------------------
+
+describe("AC-9: CLI-level shard range validation", () => {
+  function runCLI(args: string[]): { status: number | null; stderr: string } {
+    const result = spawnSync(
+      process.execPath,
+      ["--import", "tsx/esm", CLI_ENTRY, ...args],
+      {
+        encoding: "utf8",
+        env: { ...process.env, KAZE_SKIP_E2E: "1" },
+        timeout: 10000,
+      }
+    );
+    return {
+      status: result.status,
+      stderr: result.stderr ?? "",
+    };
+  }
+
+  it("exits with code 2 and prints error for --shard=0/3 (index = 0)", () => {
+    const { status, stderr } = runCLI(["--shard=0/3"]);
+    expect(status).toBe(2);
+    expect(stderr).toContain('[kaze] Invalid --shard value "0/3": index must be between 1 and total');
+  });
+
+  it("exits with code 2 and prints error for --shard=4/3 (index > total)", () => {
+    const { status, stderr } = runCLI(["--shard=4/3"]);
+    expect(status).toBe(2);
+    expect(stderr).toContain('[kaze] Invalid --shard value "4/3": index must be between 1 and total');
+  });
+
+  it("exits with code 2 for --shard=1/0 (total = 0)", () => {
+    const { status, stderr } = runCLI(["--shard=1/0"]);
+    expect(status).toBe(2);
+    expect(stderr).toContain('[kaze] Invalid --shard value "1/0": index must be between 1 and total');
   });
 });

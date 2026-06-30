@@ -157,6 +157,23 @@ const patterns = args; // may be empty → detect all spec files
       } else {
         resolvedShard = config.shard;
       }
+      // AC-9: validate shard range before execution
+      if (resolvedShard !== undefined) {
+        const { index, total } = resolvedShard;
+        if (total < 1 || index < 1 || index > total) {
+          const shardStr = typeof config.shard === "string" ? config.shard : `${index}/${total}`;
+          console.error(
+            `[kaze] Invalid --shard value "${shardStr}": index must be between 1 and total`
+          );
+          process.exit(2);
+        }
+      }
+    }
+
+    // AC-8: --shard and --watch are mutually exclusive
+    if (watchMode && resolvedShard !== undefined) {
+      console.error("[kaze] --shard cannot be used with --watch");
+      process.exit(1);
     }
 
     if (watchMode) {
