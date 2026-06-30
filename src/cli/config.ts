@@ -29,6 +29,12 @@ export interface KazeConfig {
   retries?: number;
   /** Shard specification: "index/total" string or object form (AC-4). */
   shard?: string | { index: number; total: number };
+  /**
+   * Context prewarming: after each release, pre-run resetContext so the next
+   * acquire() can return immediately without waiting for a reset.
+   * Default: true.
+   */
+  prewarm?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -155,6 +161,16 @@ function validateConfig(cfg: unknown): KazeConfig {
     result.shard = c.shard as KazeConfig["shard"];
   }
 
+  if (c.prewarm !== undefined) {
+    if (typeof c.prewarm !== "boolean") {
+      console.error(
+        `[kaze] Config error: "prewarm" must be a boolean (got ${JSON.stringify(c.prewarm)})`
+      );
+      process.exit(2);
+    }
+    result.prewarm = c.prewarm;
+  }
+
   return result;
 }
 
@@ -205,6 +221,7 @@ export function mergeConfig(
   if (cliOverrides.grepInvert !== undefined) result.grepInvert = cliOverrides.grepInvert;
   if (cliOverrides.retries !== undefined) result.retries = cliOverrides.retries;
   if (cliOverrides.shard !== undefined) result.shard = cliOverrides.shard;
+  if (cliOverrides.prewarm !== undefined) result.prewarm = cliOverrides.prewarm;
 
   return result;
 }

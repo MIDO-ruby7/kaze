@@ -22,12 +22,18 @@ export type { PooledContext, PoolStats };
 // ---------------------------------------------------------------------------
 
 /** State of a single context slot managed by the pool. */
-type ContextState = "idle" | "busy" | "failed" | "replacing";
+type ContextState = "idle" | "busy" | "failed" | "replacing" | "warming";
 
 interface ManagedContext {
   contextId: string;
   adapterId: string;
   state: ContextState;
+  /** True when resetContext has been run proactively and the slot is ready. */
+  warmed: boolean;
+  /** In-flight prewarm promise (so we can await it on close). */
+  warmPromise?: Promise<void>;
+  /** In-flight replace promise (so we can await it on close). */
+  replacePromise?: Promise<void>;
 }
 
 /** A single managed browser process and its contexts. */
@@ -58,6 +64,12 @@ export interface BrowserPoolInitOptions {
   basePort?: number;
   /** Executable path override (useful for tests). */
   executablePath?: string;
+  /**
+   * Context prewarming: after each release, proactively run resetContext so
+   * the next acquire() can return immediately without waiting for a reset.
+   * Default: true.
+   */
+  prewarm?: boolean;
 }
 
 /** A waiter entry in the wait queue. */
@@ -80,6 +92,8 @@ export class BrowserPool {
   private nextAdapterSeq = 0;
   private initOpts: BrowserPoolInitOptions = {};
   private _exitHandler: (() => void) | null = null;
+  /** Whether context prewarming is enabled (default: true). */
+  private _prewarm = true;
 
   // -------------------------------------------------------------------------
   // AC-1: init
@@ -88,6 +102,8 @@ export class BrowserPool {
   async init(opts?: BrowserPoolInitOptions): Promise<void> {
     if (this.closed) throw new Error("BrowserPool has been closed");
     this.initOpts = opts ?? {};
+    // Default prewarm to true; explicit false disables it.
+    this._prewarm = opts?.prewarm !== false;
 
     const resources = probeHostResources();
     const sizing = computePoolSizing(resources, {
@@ -119,9 +135,11 @@ export class BrowserPool {
   acquire(): Promise<PooledContext> {
     if (this.closed) return Promise.reject(new Error("BrowserPool is closed"));
 
-    const ctx = this._findIdleContext();
+    // Prefer a warmed context (ready immediately with no extra reset needed)
+    const ctx = this._findWarmedContext() ?? this._findIdleContext();
     if (ctx) {
       ctx.state = "busy";
+      ctx.warmed = false; // consume the warm flag
       return Promise.resolve({ contextId: ctx.contextId, adapterId: ctx.adapterId });
     }
 
@@ -152,7 +170,7 @@ export class BrowserPool {
     // This guarantees complete state isolation (cookies, IndexedDB, Service
     // Workers) at the cost of one newContext() call per test.
     managed.state = "replacing";
-    void this._replaceContext(managed, pooled._onReset);
+    managed.replacePromise = this._replaceContext(managed, pooled._onReset);
   }
 
   /**
@@ -174,8 +192,6 @@ export class BrowserPool {
       this._drainQueue();
       return;
     }
-
-    if (this.closed) return;
 
     try {
       if (proc.adapter.resetContext) {
@@ -201,14 +217,50 @@ export class BrowserPool {
       const waiter = this.waitQueue.shift();
       if (waiter) {
         managed.state = "busy";
+        managed.warmed = false;
         waiter.resolve({ contextId: managed.contextId, adapterId: managed.adapterId });
       } else {
         managed.state = "idle";
+        // AC-1 (Issue #37): Start prewarming the now-idle slot so the next
+        // acquire() can skip the resetContext wait.
+        if (this._prewarm) {
+          // Store the promise immediately so close() can await it via warmPromise.
+          managed.warmPromise = this._warmContext(managed, proc);
+        }
       }
     } catch {
       managed.state = "failed";
       this._drainQueue();
     }
+  }
+
+  /**
+   * AC-1 (Issue #37): Proactively run resetContext on an idle slot so the next
+   * acquire() gets a context that is already clean and ready.
+   * AC-4: Errors are swallowed — the slot stays idle and the next acquire() will
+   * trigger a regular resetContext as the fallback.
+   */
+  private async _warmContext(managed: ManagedContext, proc: ManagedProcess): Promise<void> {
+    if (managed.state !== "idle") return;
+    if (!proc.adapter.resetContext) return;
+
+    managed.state = "warming";
+    await proc.adapter.resetContext(managed.contextId).then(() => {
+      if (managed.state === "warming") {
+        managed.warmed = true;
+        managed.state = "idle";
+        // If a waiter queued up while we were warming, serve them now.
+        this._drainQueue();
+      }
+    }).catch(() => {
+      // AC-4: Prewarm failed. Fall back to idle without the warm flag.
+      // The next acquire() will run a regular resetContext via _replaceContext.
+      if (managed.state === "warming") {
+        managed.warmed = false;
+        managed.state = "idle";
+        this._drainQueue();
+      }
+    });
   }
 
   // -------------------------------------------------------------------------
@@ -234,6 +286,20 @@ export class BrowserPool {
     }
     this.waitQueue = [];
 
+    // AC-9: Wait for any in-flight replace operations, then for any warm
+    // operations they may have started, before closing adapters.
+    const allContexts = this.processes.flatMap((p) => p.contexts);
+    const replacePromises = allContexts
+      .map((ctx) => ctx.replacePromise)
+      .filter((p): p is Promise<void> => p !== undefined);
+    await Promise.allSettled(replacePromises);
+
+    // After replacements settle, warmPromise may have been set — collect and await them too.
+    const warmPromises = allContexts
+      .map((ctx) => ctx.warmPromise)
+      .filter((p): p is Promise<void> => p !== undefined);
+    await Promise.allSettled(warmPromises);
+
     // Close all processes (sends SIGTERM → SIGKILL to the process group)
     await Promise.all(this.processes.map((p) => this._closeProcess(p)));
     this.processes = [];
@@ -252,7 +318,7 @@ export class BrowserPool {
       for (const ctx of proc.contexts) {
         totalContexts++;
         if (ctx.state === "busy" || ctx.state === "replacing") busy++;
-        else if (ctx.state === "idle") idle++;
+        else if (ctx.state === "idle" || ctx.state === "warming") idle++;
         // "failed" contexts are not counted as idle/busy
       }
     }
@@ -276,6 +342,17 @@ export class BrowserPool {
   // -------------------------------------------------------------------------
   // Private helpers
   // -------------------------------------------------------------------------
+
+  /** Find an idle context that has been prewarmed (ready with no extra reset). */
+  private _findWarmedContext(): ManagedContext | undefined {
+    for (const proc of this.processes) {
+      if (proc.restarting) continue;
+      for (const ctx of proc.contexts) {
+        if (ctx.state === "idle" && ctx.warmed) return ctx;
+      }
+    }
+    return undefined;
+  }
 
   private _findIdleContext(): ManagedContext | undefined {
     for (const proc of this.processes) {
@@ -342,6 +419,7 @@ export class BrowserPool {
       contextId,
       adapterId: proc.adapterId,
       state: "idle",
+      warmed: false,
     });
   }
 

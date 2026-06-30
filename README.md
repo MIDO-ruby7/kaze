@@ -54,6 +54,7 @@ export default defineConfig({
 | `workers` | `number` (正の整数) | システム依存 | 並列ワーカー数 |
 | `timeout` | `number` (正の整数, ms) | `30000` | テストごとのタイムアウト |
 | `reporter` | `"verbose" \| "dot" \| "html"` | `"verbose"` | 出力フォーマット |
+| `prewarm` | `boolean` | `true` | Context をリリース後に即リセット開始してテスト間の待機時間をゼロに近づける |
 | `testMatch` | `string[]` | 自動検出 | 実行対象のグロブパターン |
 | `screenshot` | `boolean` | `true` | 失敗・タイムアウト時のスクリーンショット |
 | `grep` | `string` | — | テスト名の正規表現フィルタ |
