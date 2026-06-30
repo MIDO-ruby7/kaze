@@ -571,17 +571,32 @@ function matchesUrlPattern(pattern: string | RegExp, url: string): boolean {
 }
 
 /**
- * AC-1: Match a URL against a string (exact or glob with **) or RegExp pattern.
+ * AC-1 / AC-8: Match a URL against a string (exact or glob with *, **, ?) or RegExp pattern.
+ *
+ * Matching strategy for string patterns:
+ * - RegExp: used as-is.
+ * - String containing `*` or `?`: interpreted as a glob.
+ *   `**` → `.*`, `*` → `[^/]*`, `?` → `[^/]`
+ * - String without glob characters: exact match (all regex special chars including `?`
+ *   and `.` are escaped so they match literally).
  */
 function matchesPattern(pattern: string | RegExp, url: string): boolean {
   if (pattern instanceof RegExp) {
     return pattern.test(url);
   }
-  // Glob: convert ** to a regex wildcard, escape other special chars
-  const escaped = pattern
-    .replace(/[.+^${}()|[\]\\]/g, "\\$&") // escape regex special chars (except *)
-    .replace(/\*\*/g, ".*")               // ** → .*
-    .replace(/(?<!\.)(?<!\*)\*/g, "[^/]*"); // single * → [^/]*
+  const isGlob = /[*?]/.test(pattern);
+  if (isGlob) {
+    // Glob: escape regex special chars except * and ?, then expand glob syntax
+    const regexStr = pattern
+      .replace(/[.+^${}()|[\]\\]/g, "\\$&") // escape regex special chars (excluding * and ?)
+      .replace(/\*\*/g, "\x00")              // placeholder for **
+      .replace(/\*/g, "[^/]*")               // single * → [^/]*
+      .replace(/\x00/g, ".*")               // ** → .*
+      .replace(/\?/g, "[^/]");              // ? → single non-slash char (glob)
+    return new RegExp(`^${regexStr}$`).test(url);
+  }
+  // Exact match: escape all regex special chars including ? and .
+  const escaped = pattern.replace(/[.+*?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(`^${escaped}$`).test(url);
 }
 

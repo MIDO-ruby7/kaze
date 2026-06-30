@@ -418,6 +418,36 @@ describe("Page", () => {
         page.waitForURL("https://example.com/never", { timeout: 200 }),
       ).rejects.toThrow(/Timeout.*waiting for URL/);
     });
+
+    // AC-8: query string with ? treated as literal in non-glob string
+    it("exact string with query param '?' matches literally", async () => {
+      (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValue(
+        "https://example.com/page?tab=1",
+      );
+      await expect(
+        page.waitForURL("https://example.com/page?tab=1"),
+      ).resolves.toBeUndefined();
+    });
+
+    // AC-8: exact string must not match a different query string
+    it("exact string does not match URL with different query param", async () => {
+      (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValue(
+        "https://example.com/page?tab=2",
+      );
+      await expect(
+        page.waitForURL("https://example.com/page?tab=1", { timeout: 200 }),
+      ).rejects.toThrow(/Timeout.*waiting for URL/);
+    });
+
+    // AC-8: glob with ? matches any single non-slash character
+    it("glob pattern with ? matches arbitrary query string", async () => {
+      (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValue(
+        "https://example.com/path?q=hello",
+      );
+      await expect(
+        page.waitForURL("https://example.com/*?*"),
+      ).resolves.toBeUndefined();
+    });
   });
 
   // -------------------------------------------------------------------------
