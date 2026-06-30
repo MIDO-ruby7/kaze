@@ -145,6 +145,7 @@ const patterns = args; // may be empty → detect all spec files
         screenshot: screenshotEnabled,
         grep: config.grep,
         grepInvert: config.grepInvert,
+        retries: config.retries,
       });
       return;
     }

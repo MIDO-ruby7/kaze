@@ -322,6 +322,38 @@ describe("reporter — AC-5: retry display", () => {
     expect(errorLine).toBeDefined();
   });
 
+  it("AC-12: verbose reporter shows all attempt errors (not just last)", () => {
+    const logs: string[] = [];
+    const originalLog = console.log;
+    console.log = (...args: unknown[]) => logs.push(args.join(" "));
+
+    try {
+      const results: TestResult[] = [
+        {
+          id: "test-ac12",
+          name: "all-attempts-shown",
+          status: "failed",
+          durationMs: 300,
+          error: "final error",
+          retries: 2,
+          attempts: [
+            "attempt 1 error",
+            "attempt 2 error",
+            "attempt 3 error",
+          ],
+        },
+      ];
+      report(results, "verbose");
+    } finally {
+      console.log = originalLog;
+    }
+
+    // All three attempt errors must appear in output
+    expect(logs.some((l) => l.includes("Attempt 1:") && l.includes("attempt 1 error"))).toBe(true);
+    expect(logs.some((l) => l.includes("Attempt 2:") && l.includes("attempt 2 error"))).toBe(true);
+    expect(logs.some((l) => l.includes("Attempt 3:") && l.includes("attempt 3 error"))).toBe(true);
+  });
+
   it("passed test with retries shows no attempt info", () => {
     const logs: string[] = [];
     const originalLog = console.log;
