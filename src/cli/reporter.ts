@@ -4,7 +4,7 @@
 
 import type { TestResult } from "../scheduler/types.js";
 
-export type ReporterMode = "verbose" | "dot";
+export type ReporterMode = "verbose" | "dot" | "html";
 
 export interface ReportSummary {
   passed: number;

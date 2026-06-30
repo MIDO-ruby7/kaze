@@ -53,7 +53,7 @@ export default defineConfig({
 | ---------- | -- | ---------- | ---- |
 | `workers` | `number` (正の整数) | システム依存 | 並列ワーカー数 |
 | `timeout` | `number` (正の整数, ms) | `30000` | テストごとのタイムアウト |
-| `reporter` | `"verbose" \| "dot"` | `"verbose"` | 出力フォーマット |
+| `reporter` | `"verbose" \| "dot" \| "html"` | `"verbose"` | 出力フォーマット |
 | `testMatch` | `string[]` | 自動検出 | 実行対象のグロブパターン |
 | `screenshot` | `boolean` | `true` | 失敗・タイムアウト時のスクリーンショット |
 | `grep` | `string` | — | テスト名の正規表現フィルタ |
@@ -61,6 +61,8 @@ export default defineConfig({
 | `shard` | `string \| { index: number; total: number }` | — | CI 並列実行用シャード指定 (例: `"1/4"`) |
 
 CLI フラグは常に設定ファイルより優先されます。例: 設定に `screenshot: false` があっても `kaze --screenshot=on` で有効化できます。
+
+`--output-dir` フラグを指定すると、HTML レポーターの出力先ディレクトリを変更できます（デフォルト: `.kaze/report/`）。例: `kaze --reporter=html --output-dir=./reports`
 
 ## CI でのシャーディング
 
