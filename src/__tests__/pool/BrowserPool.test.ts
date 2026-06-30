@@ -758,4 +758,27 @@ describe("Issue #37: Context prewarming", () => {
     pool.release(ctx2);
     await pool.close();
   });
+
+  it("AC-9: close() awaits in-flight warmPromise before closing adapters", async () => {
+    const pool = new BrowserPool();
+    await pool.init({ maxProcesses: 1, maxContextsPerProcess: 1, prewarm: true });
+
+    const ctx = await pool.acquire();
+
+    // Give the pool a slow resetContext so warmPromise is in-flight
+    // (mock the adapter's resetContext to take 50ms)
+    const adapter = createdAdapters[createdAdapters.length - 1]!;
+    let warmingDone = false;
+    (adapter as unknown as Record<string, unknown>).resetContext = vi.fn().mockImplementation(() =>
+      new Promise<void>(r => setTimeout(() => { warmingDone = true; r(); }, 50))
+    );
+
+    pool.release(ctx); // starts _warmContext async
+
+    // Close immediately (warmPromise should be in-flight)
+    await pool.close();
+
+    // After close, warming should have completed (allSettled awaited it)
+    expect(warmingDone).toBe(true);
+  });
 });

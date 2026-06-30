@@ -30,8 +30,10 @@ interface ManagedContext {
   state: ContextState;
   /** True when resetContext has been run proactively and the slot is ready. */
   warmed: boolean;
-  /** In-flight prewarm promise (so we can await it on acquire if needed). */
+  /** In-flight prewarm promise (so we can await it on close). */
   warmPromise?: Promise<void>;
+  /** In-flight replace promise (so we can await it on close). */
+  replacePromise?: Promise<void>;
 }
 
 /** A single managed browser process and its contexts. */
@@ -168,7 +170,7 @@ export class BrowserPool {
     // This guarantees complete state isolation (cookies, IndexedDB, Service
     // Workers) at the cost of one newContext() call per test.
     managed.state = "replacing";
-    void this._replaceContext(managed, pooled._onReset);
+    managed.replacePromise = this._replaceContext(managed, pooled._onReset);
   }
 
   /**
@@ -190,8 +192,6 @@ export class BrowserPool {
       this._drainQueue();
       return;
     }
-
-    if (this.closed) return;
 
     try {
       if (proc.adapter.resetContext) {
@@ -224,7 +224,8 @@ export class BrowserPool {
         // AC-1 (Issue #37): Start prewarming the now-idle slot so the next
         // acquire() can skip the resetContext wait.
         if (this._prewarm) {
-          void this._warmContext(managed, proc);
+          // Store the promise immediately so close() can await it via warmPromise.
+          managed.warmPromise = this._warmContext(managed, proc);
         }
       }
     } catch {
@@ -240,11 +241,11 @@ export class BrowserPool {
    * trigger a regular resetContext as the fallback.
    */
   private async _warmContext(managed: ManagedContext, proc: ManagedProcess): Promise<void> {
-    if (this.closed || managed.state !== "idle") return;
+    if (managed.state !== "idle") return;
     if (!proc.adapter.resetContext) return;
 
     managed.state = "warming";
-    const warmPromise = proc.adapter.resetContext(managed.contextId).then(() => {
+    await proc.adapter.resetContext(managed.contextId).then(() => {
       if (managed.state === "warming") {
         managed.warmed = true;
         managed.state = "idle";
@@ -260,7 +261,6 @@ export class BrowserPool {
         this._drainQueue();
       }
     });
-    managed.warmPromise = warmPromise;
   }
 
   // -------------------------------------------------------------------------
@@ -286,10 +286,16 @@ export class BrowserPool {
     }
     this.waitQueue = [];
 
-    // AC-9: Wait for any in-flight warm operations before closing so that
-    // _warmContext callbacks don't race with adapter.close() below.
-    const warmPromises = this.processes
-      .flatMap((p) => p.contexts)
+    // AC-9: Wait for any in-flight replace operations, then for any warm
+    // operations they may have started, before closing adapters.
+    const allContexts = this.processes.flatMap((p) => p.contexts);
+    const replacePromises = allContexts
+      .map((ctx) => ctx.replacePromise)
+      .filter((p): p is Promise<void> => p !== undefined);
+    await Promise.allSettled(replacePromises);
+
+    // After replacements settle, warmPromise may have been set — collect and await them too.
+    const warmPromises = allContexts
       .map((ctx) => ctx.warmPromise)
       .filter((p): p is Promise<void> => p !== undefined);
     await Promise.allSettled(warmPromises);
