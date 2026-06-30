@@ -286,6 +286,14 @@ export class BrowserPool {
     }
     this.waitQueue = [];
 
+    // AC-9: Wait for any in-flight warm operations before closing so that
+    // _warmContext callbacks don't race with adapter.close() below.
+    const warmPromises = this.processes
+      .flatMap((p) => p.contexts)
+      .map((ctx) => ctx.warmPromise)
+      .filter((p): p is Promise<void> => p !== undefined);
+    await Promise.allSettled(warmPromises);
+
     // Close all processes (sends SIGTERM → SIGKILL to the process group)
     await Promise.all(this.processes.map((p) => this._closeProcess(p)));
     this.processes = [];

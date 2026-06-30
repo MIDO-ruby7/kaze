@@ -221,6 +221,7 @@ const patterns = args; // may be empty → detect all spec files
       grepInvert: config.grepInvert,
       retries: config.retries,
       shard: resolvedShard,
+      prewarm: config.prewarm,
     });
 
     const summary = report(results, reporterMode, resolvedShard);
