@@ -1,6 +1,39 @@
 # kaze
 
-Playwright-less browser automation toolkit.
+Fast, lightweight browser automation and E2E testing toolkit — a Playwright alternative built on Chrome DevTools Protocol.
+
+## Getting Started
+
+### Installation
+
+```bash
+npm install @midori/kaze
+# or
+pnpm add @midori/kaze
+```
+
+### Basic Usage
+
+Create a `kaze.config.ts` in your project root:
+
+```typescript
+import { defineConfig } from "@midori/kaze"
+
+export default defineConfig({
+  workers: 4,
+  timeout: 30000,
+  reporter: "verbose",
+  testMatch: ["tests/**/*.spec.ts"],
+})
+```
+
+Then run your tests:
+
+```bash
+npx kaze
+# or
+pnpm kaze
+```
 
 ## Development
 
@@ -39,7 +72,7 @@ pnpm install && pnpm test
 プロジェクトルートに `kaze.config.ts` を作成すると設定を永続化できます。
 
 ```typescript
-import { defineConfig } from "kaze"
+import { defineConfig } from "@midori/kaze"
 export default defineConfig({
   workers: 20,
   timeout: 60000,
@@ -87,6 +120,9 @@ jobs:
 テストが失敗・タイムアウトすると自動で `.kaze/screenshots/` に保存されます。
 `kaze --screenshot=off` で無効化できます。
 `.kaze/` は `.gitignore` に含まれています。
+
+> **Note**: To run TypeScript spec files, install `tsx` as a dev dependency:
+> `pnpm add -D tsx`
 
 ## License
 
