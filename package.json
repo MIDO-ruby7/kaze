@@ -29,10 +29,17 @@
     "dist",
     "bin",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "engines": {
     "node": ">=22"
+  },
+  "peerDependencies": {
+    "tsx": ">=4"
+  },
+  "peerDependenciesMeta": {
+    "tsx": { "optional": true }
   },
   "bin": { "kaze": "./bin/kaze.js" },
   "scripts": {

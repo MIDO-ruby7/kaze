@@ -121,6 +121,9 @@ jobs:
 `kaze --screenshot=off` で無効化できます。
 `.kaze/` は `.gitignore` に含まれています。
 
+> **Note**: To run TypeScript spec files, install `tsx` as a dev dependency:
+> `pnpm add -D tsx`
+
 ## License
 
 MIT
