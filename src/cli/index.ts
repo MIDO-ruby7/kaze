@@ -13,6 +13,7 @@
  *   kaze test src/features/           # backward compat
  */
 
+import * as path from "node:path";
 import { parseArgs } from "node:util";
 
 import { run } from "./runner.js";
@@ -138,12 +139,17 @@ const patterns = args; // may be empty → detect all spec files
     const watchMode = values.watch === true;
     // AC-1: html reporter also runs verbose to stdout (AC-5)
     const reporterMode: ReporterMode = config.reporter === "dot" ? "dot" : "verbose";
-    const htmlReporterEnabled = config.reporter === "html";
-    // AC-2: default output dir is .kaze/report; override with --output-dir
-    const outputDir =
-      typeof values["output-dir"] === "string"
-        ? values["output-dir"]
-        : ".kaze/report";
+    let htmlReporterEnabled = config.reporter === "html";
+    // AC-2: default output dir is .kaze/report; override with --output-dir (GAP-3: resolve to absolute path)
+    const outputDir = values["output-dir"]
+      ? path.resolve(process.cwd(), values["output-dir"] as string)
+      : path.join(process.cwd(), ".kaze", "report");
+
+    // B-1 / AC-8: --watch and --reporter=html are mutually incompatible; warn and disable HTML
+    if (watchMode && htmlReporterEnabled) {
+      console.warn("[kaze] --reporter=html is not supported with --watch. HTML report will not be generated.");
+      htmlReporterEnabled = false;
+    }
 
     // testMatch from config is used only when no positional patterns are given (AC-2)
     const effectivePatterns =
@@ -217,10 +223,7 @@ const patterns = args; // may be empty → detect all spec files
 
     // AC-1/AC-2: write HTML report when --reporter=html or config reporter: "html"
     if (htmlReporterEnabled) {
-      const resolvedOutputDir = outputDir.startsWith("/")
-        ? outputDir
-        : `${process.cwd()}/${outputDir}`;
-      const reportPath = await writeHtmlReport(results, resolvedOutputDir, {
+      const reportPath = await writeHtmlReport(results, outputDir, {
         duration: summary.totalMs,
       });
       console.log(`[kaze] HTML report written to ${reportPath}`);

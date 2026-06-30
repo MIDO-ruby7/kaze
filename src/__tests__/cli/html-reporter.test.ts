@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import * as os from "node:os";
 
-import { generateHtml, writeHtmlReport } from "../../cli/html-reporter.js";
+import { generateHtml, writeHtmlReport, escapeHtml } from "../../cli/html-reporter.js";
 import type { TestResult } from "../../scheduler/types.js";
 
 // ---------------------------------------------------------------------------
@@ -32,6 +32,18 @@ const timedOut: TestResult = {
   durationMs: 30000,
   error: "Timeout exceeded",
 };
+
+// ---------------------------------------------------------------------------
+// escapeHtml
+// ---------------------------------------------------------------------------
+
+describe("escapeHtml", () => {
+  it("AC-9: escapes XSS-sensitive characters", () => {
+    expect(escapeHtml('<script>alert("xss")</script>')).toBe('&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;');
+    expect(escapeHtml("a & b")).toBe("a &amp; b");
+    expect(escapeHtml("it's 'ok'")).toBe("it&#39;s &#39;ok&#39;");
+  });
+});
 
 // ---------------------------------------------------------------------------
 // generateHtml
