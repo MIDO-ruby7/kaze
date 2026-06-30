@@ -36,6 +36,7 @@ const { values, positionals } = parseArgs({
     grep: { type: "string" },
     "grep-invert": { type: "string" },
     retries: { type: "string" },
+    shard: { type: "string" },
     help: { type: "boolean", short: "h", default: false },
   },
   allowPositionals: true,
@@ -58,6 +59,7 @@ Options:
   --grep=PATTERN           Only run tests matching regex pattern
   --grep-invert=PATTERN    Skip tests matching regex pattern
   --retries=N              Retry failing tests N times (default: 0)
+  --shard=INDEX/TOTAL      Run only this shard of spec files (e.g. --shard=1/10)
   --watch, -w              Watch for file changes and re-run tests
   -h, --help               Show this help
 
@@ -114,6 +116,9 @@ const patterns = args; // may be empty → detect all spec files
       typeof values["grep-invert"] === "string" ? values["grep-invert"] : undefined;
     const cliRetries =
       typeof values.retries === "string" ? parseInt(values.retries, 10) : undefined;
+    // --shard=1/3 → pass as string; config file may provide string or object form
+    const cliShard =
+      typeof values.shard === "string" ? values.shard : undefined;
 
     const config = mergeConfig(fileConfig, {
       workers: cliWorkers !== undefined && !isNaN(cliWorkers) ? cliWorkers : undefined,
@@ -123,6 +128,7 @@ const patterns = args; // may be empty → detect all spec files
       grep: cliGrep,
       grepInvert: cliGrepInvert,
       retries: cliRetries !== undefined && !isNaN(cliRetries) ? cliRetries : undefined,
+      shard: cliShard,
       // testMatch: patterns are handled separately below
     });
 
@@ -135,6 +141,40 @@ const patterns = args; // may be empty → detect all spec files
 
     // screenshot defaults to true if not set by config or CLI
     const screenshotEnabled = config.screenshot !== false;
+
+    // Parse shard — accepts "1/3" string or { index, total } object
+    let resolvedShard: { index: number; total: number } | undefined;
+    if (config.shard !== undefined) {
+      if (typeof config.shard === "string") {
+        const match = /^(\d+)\/(\d+)$/.exec(config.shard);
+        if (!match) {
+          console.error(
+            `[kaze] Invalid --shard value "${config.shard}". Expected format: INDEX/TOTAL (e.g. 1/3)`
+          );
+          process.exit(2);
+        }
+        resolvedShard = { index: parseInt(match[1]!, 10), total: parseInt(match[2]!, 10) };
+      } else {
+        resolvedShard = config.shard;
+      }
+      // AC-9: validate shard range before execution
+      if (resolvedShard !== undefined) {
+        const { index, total } = resolvedShard;
+        if (total < 1 || index < 1 || index > total) {
+          const shardStr = typeof config.shard === "string" ? config.shard : `${index}/${total}`;
+          console.error(
+            `[kaze] Invalid --shard value "${shardStr}": index must be between 1 and total`
+          );
+          process.exit(2);
+        }
+      }
+    }
+
+    // AC-8: --shard and --watch are mutually exclusive
+    if (watchMode && resolvedShard !== undefined) {
+      console.error("[kaze] --shard cannot be used with --watch");
+      process.exit(1);
+    }
 
     if (watchMode) {
       await watch({
@@ -160,9 +200,10 @@ const patterns = args; // may be empty → detect all spec files
       grep: config.grep,
       grepInvert: config.grepInvert,
       retries: config.retries,
+      shard: resolvedShard,
     });
 
-    const summary = report(results, reporterMode);
+    const summary = report(results, reporterMode, resolvedShard);
 
     // Exit code: 1 if any failures or timeouts
     if (summary.failed > 0 || summary.timedOut > 0) {

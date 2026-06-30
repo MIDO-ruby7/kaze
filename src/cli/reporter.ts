@@ -15,12 +15,23 @@ export interface ReportSummary {
 
 /**
  * Print results and return a summary.
+ *
+ * @param shard  When provided, prints a `[Shard N/M]` prefix line in verbose mode (AC-5).
  */
-export function report(results: TestResult[], mode: ReporterMode): ReportSummary {
+export function report(
+  results: TestResult[],
+  mode: ReporterMode,
+  shard?: { index: number; total: number }
+): ReportSummary {
   let passed = 0;
   let failed = 0;
   let timedOut = 0;
   let totalMs = 0;
+
+  // AC-5: show shard prefix in verbose mode
+  if (mode === "verbose" && shard) {
+    console.log(`[Shard ${shard.index}/${shard.total}]`);
+  }
 
   if (mode === "dot") {
     const dots: string[] = [];
