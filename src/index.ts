@@ -26,7 +26,7 @@ export { collectTestCases, _resetRegistry } from "./api/test.js";
 export type { GotoOptions, WaitForSelectorOptions } from "./api/Page.js";
 export type { LocatorMatchers, PageMatchers } from "./api/expect.js";
 export type { FulfillOptions } from "./api/Route.js";
-export type { GetByTextOptions } from "./api/Locator.js";
+export type { GetByTextOptions, AriaRole, GetByRoleOptions } from "./api/Locator.js";
 
 // ---------------------------------------------------------------------------
 // Config API (AC-5)

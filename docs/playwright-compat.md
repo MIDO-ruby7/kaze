@@ -57,6 +57,7 @@ test('my test', async (page) => { ... });
 | `page.getByLabel(text, opts?)` | Supported | Finds input/select/textarea via `for`/id association or nesting; partial match by default |
 | `page.getByPlaceholder(text, opts?)` | Supported | Partial match by default (`placeholder` attribute); `{ exact: true }` for exact match |
 | `page.getByTestId(id)` | Supported | Returns `Locator` for `[data-testid="id"]` |
+| `page.getByRole(role, opts?)` | Supported | Supports all WAI-ARIA 1.2 roles (70+); implicit HTML roles mapped to native selectors (e.g. `button` → `button, [role="button"], input[type="button"], ...`); `{ name }` option filters by aria-label / aria-labelledby / textContent (string or RegExp); `{ exact }` controls exact vs partial match (default: partial) |
 | `page.url()` | Supported | |
 | `page.title()` | Supported | Returns `document.title` |
 | `page.close()` | Supported | |
