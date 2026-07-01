@@ -262,6 +262,155 @@ describe("expect(locator).toHaveCount", () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// toHaveClass
+// ---------------------------------------------------------------------------
+
+describe("expect(locator).toHaveClass", () => {
+  let adapter: ProtocolAdapter;
+  let page: Page;
+
+  beforeEach(() => {
+    adapter = makeAdapter();
+    page = createPage(adapter, ctx);
+  });
+
+  it("resolves when class attribute matches a string (partial)", async () => {
+    (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValue("foo bar baz");
+    const locator = page.locator("#el");
+    await vitestExpect(expect(locator).toHaveClass("bar")).resolves.toBeUndefined();
+  });
+
+  it("resolves when class attribute matches a RegExp", async () => {
+    (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValue("foo bar baz");
+    const locator = page.locator("#el");
+    await vitestExpect(expect(locator).toHaveClass(/^foo/)).resolves.toBeUndefined();
+  });
+
+  it("retries and resolves when class eventually matches", async () => {
+    const mock = adapter.evaluate as ReturnType<typeof vi.fn>;
+    mock
+      .mockResolvedValueOnce("loading")
+      .mockResolvedValueOnce("ready");
+    const locator = page.locator("#el");
+    await vitestExpect(
+      expect(locator).toHaveClass("ready", { timeout: 2000 }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("throws AssertionError when class does not match within timeout", async () => {
+    (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValue("other");
+    const locator = page.locator("#el");
+    await vitestExpect(
+      expect(locator).toHaveClass("active", { timeout: 200 }),
+    ).rejects.toBeInstanceOf(AssertionError);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// toHaveAttribute
+// ---------------------------------------------------------------------------
+
+describe("expect(locator).toHaveAttribute", () => {
+  let adapter: ProtocolAdapter;
+  let page: Page;
+
+  beforeEach(() => {
+    adapter = makeAdapter();
+    page = createPage(adapter, ctx);
+  });
+
+  it("resolves when attribute value matches a string exactly", async () => {
+    (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValue("submit");
+    const locator = page.locator("button");
+    await vitestExpect(expect(locator).toHaveAttribute("type", "submit")).resolves.toBeUndefined();
+  });
+
+  it("resolves when attribute value matches a RegExp", async () => {
+    (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValue("btn-primary");
+    const locator = page.locator("button");
+    await vitestExpect(expect(locator).toHaveAttribute("class", /primary/)).resolves.toBeUndefined();
+  });
+
+  it("retries and resolves when attribute value eventually matches", async () => {
+    const mock = adapter.evaluate as ReturnType<typeof vi.fn>;
+    mock
+      .mockResolvedValueOnce("loading")
+      .mockResolvedValueOnce("done");
+    const locator = page.locator("#el");
+    await vitestExpect(
+      expect(locator).toHaveAttribute("data-state", "done", { timeout: 2000 }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("throws AssertionError when attribute does not match within timeout", async () => {
+    (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValue("other");
+    const locator = page.locator("#el");
+    await vitestExpect(
+      expect(locator).toHaveAttribute("aria-label", "close", { timeout: 200 }),
+    ).rejects.toBeInstanceOf(AssertionError);
+  });
+
+  it("throws AssertionError when attribute is absent (null)", async () => {
+    (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValue(null);
+    const locator = page.locator("#el");
+    await vitestExpect(
+      expect(locator).toHaveAttribute("data-missing", "value", { timeout: 200 }),
+    ).rejects.toBeInstanceOf(AssertionError);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// toContainText
+// ---------------------------------------------------------------------------
+
+describe("expect(locator).toContainText", () => {
+  let adapter: ProtocolAdapter;
+  let page: Page;
+
+  beforeEach(() => {
+    adapter = makeAdapter();
+    page = createPage(adapter, ctx);
+  });
+
+  it("resolves when text content includes the expected substring", async () => {
+    (adapter.evaluate as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce("Hello World") // waitForSelector
+      .mockResolvedValueOnce("Hello World"); // textContent
+    const locator = page.locator("#msg");
+    await vitestExpect(expect(locator).toContainText("World")).resolves.toBeUndefined();
+  });
+
+  it("resolves when text content matches a RegExp", async () => {
+    (adapter.evaluate as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce("Hello World")
+      .mockResolvedValueOnce("Hello World");
+    const locator = page.locator("#msg");
+    await vitestExpect(expect(locator).toContainText(/Wor\w+/)).resolves.toBeUndefined();
+  });
+
+  it("retries and resolves when text eventually contains expected", async () => {
+    const mock = adapter.evaluate as ReturnType<typeof vi.fn>;
+    mock
+      .mockResolvedValueOnce("loading...") // 1st textContent: waitForSelector
+      .mockResolvedValueOnce("loading...") // 1st textContent: textContent evaluate
+      .mockResolvedValueOnce("done!")      // 2nd textContent: waitForSelector
+      .mockResolvedValueOnce("done!");     // 2nd textContent: textContent evaluate
+    const locator = page.locator("#msg");
+    await vitestExpect(
+      expect(locator).toContainText("done", { timeout: 2000 }),
+    ).resolves.toBeUndefined();
+  });
+
+  it("throws AssertionError when text does not contain expected within timeout", async () => {
+    (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValue("nope");
+    const locator = page.locator("#msg");
+    await vitestExpect(
+      expect(locator).toContainText("expected", { timeout: 200 }),
+    ).rejects.toBeInstanceOf(AssertionError);
+  });
+});
+
 describe("expect(page).toHaveURL", () => {
   let adapter: ProtocolAdapter;
   let page: Page;

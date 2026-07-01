@@ -108,8 +108,10 @@ test('my test', async (page) => { ... });
 | `expect(locator).toHaveCount(n)` | Supported | Auto-retry up to 5s |
 | `expect(page).toHaveURL(url)` | Supported | Accepts string or RegExp |
 | `expect(page).toHaveTitle(title)` | Supported | Auto-retry up to 5s; accepts string or RegExp |
+| `expect(locator).toHaveClass(class)` | Supported | Auto-retry up to 5s; word-boundary match (space-separated classList) |
+| `expect(locator).toHaveAttribute(name, value)` | Supported | Auto-retry up to 5s; accepts string (exact) or RegExp |
+| `expect(locator).toContainText(text)` | Supported | Auto-retry up to 5s; accepts string (substring) or RegExp |
 | `expect(locator).toBeHidden()` | Not supported | — |
-| `expect(locator).toHaveAttribute()` | Not supported | — |
 | Soft assertions (`expect.soft`) | Not supported | — |
 
 ### CLI フィルタ
@@ -125,5 +127,4 @@ test('my test', async (page) => { ... });
 
 - `test.beforeEach` / `test.afterEach`
 - `expect(locator).toBeHidden()`
-- `expect(locator).toHaveAttribute()`
 - BiDi protocol support
