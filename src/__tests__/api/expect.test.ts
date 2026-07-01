@@ -447,3 +447,76 @@ describe("expect(page).toHaveURL", () => {
     ).rejects.toBeInstanceOf(AssertionError);
   });
 });
+
+// ---------------------------------------------------------------------------
+// expect(locator).not matchers
+// ---------------------------------------------------------------------------
+
+describe("expect(locator).not matchers", () => {
+  let adapter: ReturnType<typeof makeAdapter>;
+  let page: Page;
+
+  beforeEach(() => {
+    adapter = makeAdapter();
+    page = createPage(adapter, ctx);
+  });
+
+  it("not.toBeVisible resolves when element is not visible", async () => {
+    (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValueOnce(false);
+    const locator = page.locator("#spinner");
+    await vitestExpect(expect(locator).not.toBeVisible()).resolves.toBeUndefined();
+  });
+
+  it("not.toBeVisible throws when element is visible", async () => {
+    (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+    const locator = page.locator("#spinner");
+    await vitestExpect(
+      expect(locator).not.toBeVisible({ timeout: 200 }),
+    ).rejects.toBeInstanceOf(AssertionError);
+  }, 1000);
+
+  it("not.toHaveText resolves when text is absent", async () => {
+    (adapter.evaluate as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce("other text") // waitForSelector
+      .mockResolvedValueOnce("other text"); // textContent
+    const locator = page.locator("#result");
+    await vitestExpect(expect(locator).not.toHaveText("hello")).resolves.toBeUndefined();
+  });
+
+  it("not.toHaveText throws when text is present", async () => {
+    (adapter.evaluate as ReturnType<typeof vi.fn>)
+      .mockResolvedValue("hello world");
+    const locator = page.locator("#result");
+    await vitestExpect(
+      expect(locator).not.toHaveText("hello", { timeout: 200 }),
+    ).rejects.toBeInstanceOf(AssertionError);
+  }, 1000);
+
+  it("not.toHaveValue resolves when value differs", async () => {
+    (adapter.evaluate as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(true)     // waitForSelector (inputValue)
+      .mockResolvedValueOnce("other"); // inputValue evaluate
+    const locator = page.locator("input");
+    await vitestExpect(expect(locator).not.toHaveValue("expected")).resolves.toBeUndefined();
+  });
+
+  it("not.toBeChecked resolves when element is unchecked", async () => {
+    (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValueOnce(false);
+    const locator = page.locator("input[type=checkbox]");
+    await vitestExpect(expect(locator).not.toBeChecked()).resolves.toBeUndefined();
+  });
+
+  it("not.toBeEnabled resolves when element is disabled", async () => {
+    (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValueOnce(false);
+    const locator = page.locator("button");
+    await vitestExpect(expect(locator).not.toBeEnabled()).resolves.toBeUndefined();
+  });
+
+  it("not.toContainText resolves when text is absent", async () => {
+    (adapter.evaluate as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce("other content") // waitForSelector
+      .mockResolvedValueOnce("other content"); // textContent
+    const locator = page.locator("#result");
+    await vitestExpect(expect(locator).not.toContainText("missing")).resolves.toBeUndefined();
+  });
+});

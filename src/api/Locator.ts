@@ -16,6 +16,13 @@ export interface CheckOptions {
   timeout?: number;
 }
 
+export interface FilterOptions {
+  /** Only include elements whose textContent includes this string/RegExp. */
+  hasText?: string | RegExp;
+  /** Exclude elements whose textContent includes this string/RegExp. */
+  hasNotText?: string | RegExp;
+}
+
 export interface SelectOptionValue {
   /** Select by option label text. */
   label?: string;
@@ -306,6 +313,58 @@ export class Locator {
   }
 
   /**
+   * Filter this Locator's matches by text content.
+   * Returns a new FilterLocator that only matches elements satisfying the criteria.
+   *
+   * Playwright-compatible: locator.filter({ hasText, hasNotText })
+   */
+  filter(opts: FilterOptions): FilterLocator {
+    return new FilterLocator(this.page, this.selector, opts);
+  }
+
+  /**
+   * Wait until the element reaches the given state.
+   * Playwright-compatible: locator.waitFor({ state, timeout })
+   *
+   * - 'visible'  (default): element exists and is visible
+   * - 'hidden':  element is hidden (display:none / visibility:hidden / opacity:0) or absent
+   * - 'attached': element is present in the DOM
+   * - 'detached': element is absent from the DOM
+   */
+  async waitFor(opts?: {
+    state?: "visible" | "hidden" | "attached" | "detached";
+    timeout?: number;
+  }): Promise<void> {
+    const state = opts?.state ?? "visible";
+    const timeout = opts?.timeout ?? 30_000;
+    const interval = 100;
+    const deadline = Date.now() + timeout;
+    const escapedSel = escapeSelector(this.selector);
+
+    while (Date.now() < deadline) {
+      const result = await this.page._evaluate(
+        `(function(){
+          var el = document.querySelector('${escapedSel}');
+          if (!el) return 'detached';
+          var style = window.getComputedStyle(el);
+          var visible = style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
+          return visible ? 'visible' : 'hidden';
+        })()`,
+      );
+      const current = String(result ?? "detached");
+      if (state === "visible" && current === "visible") return;
+      if (state === "hidden" && (current === "hidden" || current === "detached")) return;
+      if (state === "attached" && (current === "visible" || current === "hidden")) return;
+      if (state === "detached" && current === "detached") return;
+      await new Promise<void>(resolve => setTimeout(resolve, interval));
+    }
+
+    throw new Error(
+      `Timeout ${timeout}ms waiting for locator "${this.selector}" to be ${state}`,
+    );
+  }
+
+  /**
    * Internal: evaluate JS with the selector in scope.
    * @internal
    */
@@ -434,6 +493,168 @@ export interface GetByRoleOptions {
   name?: string | RegExp;
   /** When true, name must match exactly. Default: false (partial match). */
   exact?: boolean;
+}
+
+/**
+ * FilterLocator — a Locator that wraps another Locator and filters its
+ * results by text content at action time.
+ *
+ * Supports hasText (string/RegExp) and hasNotText (string/RegExp) options,
+ * matching Playwright's locator.filter() API.
+ */
+export class FilterLocator extends Locator {
+  constructor(
+    page: Page,
+    private readonly _parentSelector: string,
+    private readonly _filterOpts: FilterOptions,
+  ) {
+    super(page, "");
+  }
+
+  /** Tag the first matching element and return the attribute selector for it. */
+  private async _resolve(): Promise<string> {
+    const tag = `data-kaze-filter-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const rawSel = this._parentSelector.replace(/'/g, "\\'");
+    const script = buildFilterScript(rawSel, this._filterOpts, tag);
+    await (this.page as Page)._evaluate(script);
+    return `[${tag}]`;
+  }
+
+  private async _withResolved<T>(fn: (loc: Locator) => Promise<T>): Promise<T> {
+    const sel = await this._resolve();
+    return fn(new Locator(this.page as Page, sel));
+  }
+
+  async click(opts?: Parameters<Locator["click"]>[0]): Promise<void> {
+    return this._withResolved(l => l.click(opts));
+  }
+  async fill(value: string, opts?: Parameters<Locator["fill"]>[1]): Promise<void> {
+    return this._withResolved(l => l.fill(value, opts));
+  }
+  async textContent(opts?: Parameters<Locator["textContent"]>[0]): Promise<string | null> {
+    return this._withResolved(l => l.textContent(opts));
+  }
+  async innerText(opts?: Parameters<Locator["innerText"]>[0]): Promise<string> {
+    return this._withResolved(l => l.innerText(opts));
+  }
+  async getAttribute(name: string, opts?: Parameters<Locator["getAttribute"]>[1]): Promise<string | null> {
+    return this._withResolved(l => l.getAttribute(name, opts));
+  }
+  async inputValue(opts?: Parameters<Locator["inputValue"]>[0]): Promise<string> {
+    return this._withResolved(l => l.inputValue(opts));
+  }
+  async isVisible(): Promise<boolean> {
+    return this._withResolved(l => l.isVisible());
+  }
+  async isEnabled(): Promise<boolean> {
+    return this._withResolved(l => l.isEnabled());
+  }
+  async hover(opts?: Parameters<Locator["hover"]>[0]): Promise<void> {
+    return this._withResolved(l => l.hover(opts));
+  }
+  async check(opts?: Parameters<Locator["check"]>[0]): Promise<void> {
+    return this._withResolved(l => l.check(opts));
+  }
+  async uncheck(opts?: Parameters<Locator["uncheck"]>[0]): Promise<void> {
+    return this._withResolved(l => l.uncheck(opts));
+  }
+  async selectOption(
+    value: Parameters<Locator["selectOption"]>[0],
+    opts?: Parameters<Locator["selectOption"]>[1],
+  ): Promise<void> {
+    return this._withResolved(l => l.selectOption(value, opts));
+  }
+  async count(): Promise<number> {
+    const result = await (this.page as Page)._evaluate(
+      buildFilterCountScript(this._parentSelector.replace(/'/g, "\\'"), this._filterOpts)
+    );
+    return Number(result ?? 0);
+  }
+}
+
+/**
+ * Build the evaluate script that finds the first element matching
+ * parentSelector and the filter options, tagging it with `tag`.
+ */
+function buildFilterScript(rawSel: string, opts: FilterOptions, tag: string): string {
+  const hasText = opts.hasText;
+  const hasNotText = opts.hasNotText;
+
+  let hasTextExpr = "true";
+  let hasNotTextExpr = "false";
+
+  if (hasText !== undefined) {
+    if (hasText instanceof RegExp) {
+      hasTextExpr = `/${hasText.source}/${hasText.flags}.test(el.textContent || '')`;
+    } else {
+      const escaped = hasText.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+      hasTextExpr = `(el.textContent || '').includes('${escaped}')`;
+    }
+  }
+
+  if (hasNotText !== undefined) {
+    if (hasNotText instanceof RegExp) {
+      hasNotTextExpr = `/${hasNotText.source}/${hasNotText.flags}.test(el.textContent || '')`;
+    } else {
+      const escaped = hasNotText.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+      hasNotTextExpr = `(el.textContent || '').includes('${escaped}')`;
+    }
+  }
+
+  return `(function(){
+    var els = document.querySelectorAll('${rawSel}');
+    for (var i = 0; i < els.length; i++) {
+      var el = els[i];
+      var matchHas = ${hasTextExpr};
+      var matchHasNot = ${hasNotTextExpr};
+      if (matchHas && !matchHasNot) {
+        el.setAttribute('${tag}', '1');
+        break;
+      }
+    }
+  })()`;
+}
+
+/**
+ * Build the evaluate script that counts elements matching
+ * parentSelector and the filter options.
+ */
+function buildFilterCountScript(rawSel: string, opts: FilterOptions): string {
+  const hasText = opts.hasText;
+  const hasNotText = opts.hasNotText;
+
+  let hasTextExpr = "true";
+  let hasNotTextExpr = "false";
+
+  if (hasText !== undefined) {
+    if (hasText instanceof RegExp) {
+      hasTextExpr = `/${hasText.source}/${hasText.flags}.test(el.textContent || '')`;
+    } else {
+      const escaped = hasText.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+      hasTextExpr = `(el.textContent || '').includes('${escaped}')`;
+    }
+  }
+
+  if (hasNotText !== undefined) {
+    if (hasNotText instanceof RegExp) {
+      hasNotTextExpr = `/${hasNotText.source}/${hasNotText.flags}.test(el.textContent || '')`;
+    } else {
+      const escaped = hasNotText.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+      hasNotTextExpr = `(el.textContent || '').includes('${escaped}')`;
+    }
+  }
+
+  return `(function(){
+    var els = document.querySelectorAll('${rawSel}');
+    var count = 0;
+    for (var i = 0; i < els.length; i++) {
+      var el = els[i];
+      var matchHas = ${hasTextExpr};
+      var matchHasNot = ${hasNotTextExpr};
+      if (matchHas && !matchHasNot) count++;
+    }
+    return count;
+  })()`;
 }
 
 /**

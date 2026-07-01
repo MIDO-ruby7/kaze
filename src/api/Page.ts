@@ -348,8 +348,18 @@ export class Page {
     throw new Error(`Timeout ${timeout}ms waiting for load state "${state}"`);
   }
 
-  /** Create a Locator for elements matching `selector` within this page. */
+  /**
+   * Create a Locator for elements matching `selector` within this page.
+   *
+   * Supports Playwright's `:text("...")` pseudo-selector syntax as a shorthand
+   * for getByText(). Both double-quoted and single-quoted forms are accepted.
+   */
   locator(selector: string): Locator {
+    // :text("...") or :text('...') → getByText(...)
+    const textMatch =
+      selector.match(/^:text\("(.+?)"\)$/) ||
+      selector.match(/^:text\('(.+?)'\)$/);
+    if (textMatch) return this.getByText(textMatch[1]!);
     return new Locator(this, selector);
   }
 

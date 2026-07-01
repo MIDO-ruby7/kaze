@@ -498,4 +498,127 @@ describe("Locator", () => {
       expect(resolveScript).toContain("els[0]");
     });
   });
+
+  // -------------------------------------------------------------------------
+  // filter() — FilterLocator
+  // -------------------------------------------------------------------------
+  describe("filter()", () => {
+    it("returns a FilterLocator that tags the matching element by hasText string", async () => {
+      const listLocator = page.locator("li");
+      const filtered = listLocator.filter({ hasText: "milk" });
+
+      // _resolve call: tag the element
+      (adapter.evaluate as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce(undefined)  // FilterLocator _resolve (tag)
+        .mockResolvedValueOnce(true)       // waitForSelector
+        .mockResolvedValueOnce("milk");    // textContent
+
+      const text = await filtered.textContent();
+      expect(text).toBe("milk");
+
+      const calls = (adapter.evaluate as ReturnType<typeof vi.fn>).mock.calls;
+      const resolveScript = calls[0][1] as string;
+      expect(resolveScript).toContain("milk");
+      expect(resolveScript).toContain("data-kaze-filter-");
+    });
+
+    it("filter with hasNotText excludes elements containing the text", async () => {
+      const listLocator = page.locator("li");
+      const filtered = listLocator.filter({ hasNotText: "done" });
+
+      (adapter.evaluate as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce(undefined)
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce("pending item");
+
+      const text = await filtered.textContent();
+      expect(text).toBe("pending item");
+
+      const calls = (adapter.evaluate as ReturnType<typeof vi.fn>).mock.calls;
+      const resolveScript = calls[0][1] as string;
+      expect(resolveScript).toContain("done");
+      expect(resolveScript).toContain("!matchHasNot");
+    });
+
+    it("filter with RegExp hasText uses regex test", async () => {
+      const listLocator = page.locator("li");
+      const filtered = listLocator.filter({ hasText: /milk/i });
+
+      (adapter.evaluate as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce(undefined)
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce("Milk");
+
+      const text = await filtered.textContent();
+      expect(text).toBe("Milk");
+
+      const calls = (adapter.evaluate as ReturnType<typeof vi.fn>).mock.calls;
+      const resolveScript = calls[0][1] as string;
+      expect(resolveScript).toContain("/milk/i");
+    });
+
+    it("filter count() uses buildFilterCountScript", async () => {
+      const listLocator = page.locator("li");
+      const filtered = listLocator.filter({ hasText: "milk" });
+
+      (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValueOnce(2);
+      const count = await filtered.count();
+      expect(count).toBe(2);
+
+      const calls = (adapter.evaluate as ReturnType<typeof vi.fn>).mock.calls;
+      const countScript = calls[0][1] as string;
+      expect(countScript).toContain("milk");
+      expect(countScript).toContain("return count");
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // waitFor()
+  // -------------------------------------------------------------------------
+  describe("waitFor()", () => {
+    it("resolves when element is visible (default state)", async () => {
+      (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValueOnce("visible");
+      await locator.waitFor();
+      expect(adapter.evaluate).toHaveBeenCalledTimes(1);
+    });
+
+    it("resolves when state is 'hidden' and element is hidden", async () => {
+      (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValueOnce("hidden");
+      await locator.waitFor({ state: "hidden" });
+      expect(adapter.evaluate).toHaveBeenCalledTimes(1);
+    });
+
+    it("resolves when state is 'hidden' and element is detached", async () => {
+      (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValueOnce("detached");
+      await locator.waitFor({ state: "hidden" });
+      expect(adapter.evaluate).toHaveBeenCalledTimes(1);
+    });
+
+    it("resolves when state is 'attached' and element is visible", async () => {
+      (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValueOnce("visible");
+      await locator.waitFor({ state: "attached" });
+      expect(adapter.evaluate).toHaveBeenCalledTimes(1);
+    });
+
+    it("resolves when state is 'detached' and element is absent", async () => {
+      (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValueOnce("detached");
+      await locator.waitFor({ state: "detached" });
+      expect(adapter.evaluate).toHaveBeenCalledTimes(1);
+    });
+
+    it("retries until element becomes visible", async () => {
+      (adapter.evaluate as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce("detached")
+        .mockResolvedValueOnce("visible");
+      await locator.waitFor({ state: "visible" });
+      expect(adapter.evaluate).toHaveBeenCalledTimes(2);
+    });
+
+    it("throws on timeout when state is not reached", async () => {
+      (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValue("detached");
+      await expect(locator.waitFor({ state: "visible", timeout: 150 })).rejects.toThrow(
+        /Timeout.*waiting for locator/,
+      );
+    }, 1000);
+  });
 });

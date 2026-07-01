@@ -29,6 +29,8 @@ export interface LocatorMatchers {
   toHaveClass(expected: string | RegExp, opts?: { timeout?: number }): Promise<void>;
   toHaveAttribute(name: string, value: string | RegExp, opts?: { timeout?: number }): Promise<void>;
   toContainText(expected: string | RegExp, opts?: { timeout?: number }): Promise<void>;
+  /** Negated matchers — each method asserts the inverse condition. */
+  readonly not: LocatorMatchers;
 }
 
 export interface PageMatchers {
@@ -42,6 +44,11 @@ export interface PageMatchers {
 
 class LocatorExpect implements LocatorMatchers {
   constructor(private readonly locator: Locator) {}
+
+  /** Negated matchers — asserts the inverse of each condition. */
+  get not(): LocatorMatchers {
+    return new NegatedLocatorExpect(this.locator);
+  }
 
   async toHaveText(
     expected: string,
@@ -397,6 +404,318 @@ class LocatorExpect implements LocatorMatchers {
         `  Selector: ${this.locator.selector}\n` +
         `  Expected text to contain: ${String(expected)}\n` +
         `  Received:                 ${JSON.stringify(lastActual)}\n` +
+        `  Timeout: ${timeout}ms`,
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// NegatedLocatorExpect — inverts every assertion
+// ---------------------------------------------------------------------------
+
+class NegatedLocatorExpect implements LocatorMatchers {
+  constructor(private readonly locator: Locator) {}
+
+  /** not.not is not supported; returns itself to avoid crashes. */
+  get not(): LocatorMatchers {
+    return new LocatorExpect(this.locator);
+  }
+
+  async toHaveText(expected: string, opts?: { timeout?: number }): Promise<void> {
+    const timeout = opts?.timeout ?? DEFAULT_TIMEOUT_MS;
+    const deadline = Date.now() + timeout;
+    let lastActual: string | null = null;
+
+    while (Date.now() < deadline) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) break;
+      try {
+        lastActual = await this.locator.textContent({ timeout: POLL_INTERVAL_MS });
+        if (lastActual === null || !lastActual.includes(expected)) return;
+      } catch {
+        return; // element absent — condition satisfied
+      }
+      await delay(POLL_INTERVAL_MS);
+    }
+
+    throw new AssertionError(
+      `expect(locator).not.toHaveText(${JSON.stringify(expected)})\n` +
+        `  Selector: ${this.locator.selector}\n` +
+        `  Expected text NOT to include: ${JSON.stringify(expected)}\n` +
+        `  Received: ${JSON.stringify(lastActual)}\n` +
+        `  Timeout: ${timeout}ms`,
+    );
+  }
+
+  async toBeVisible(opts?: { timeout?: number }): Promise<void> {
+    const timeout = opts?.timeout ?? DEFAULT_TIMEOUT_MS;
+    const deadline = Date.now() + timeout;
+
+    while (Date.now() < deadline) {
+      try {
+        const result = await this.locator._evaluate(
+          `(function() {
+            const el = document.querySelector('${escapeSelector(this.locator.selector)}');
+            if (!el) return false;
+            const style = window.getComputedStyle(el);
+            return style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
+          })()`,
+        );
+        if (result !== true) return;
+      } catch {
+        return; // element absent — not visible
+      }
+      await delay(POLL_INTERVAL_MS);
+    }
+
+    throw new AssertionError(
+      `expect(locator).not.toBeVisible()\n` +
+        `  Selector: ${this.locator.selector}\n` +
+        `  Expected element NOT to be visible\n` +
+        `  Timeout: ${timeout}ms`,
+    );
+  }
+
+  async toBeChecked(opts?: { timeout?: number }): Promise<void> {
+    const timeout = opts?.timeout ?? DEFAULT_TIMEOUT_MS;
+    const deadline = Date.now() + timeout;
+
+    while (Date.now() < deadline) {
+      try {
+        const result = await this.locator._evaluate(
+          `(function() {
+            const el = document.querySelector('${escapeSelector(this.locator.selector)}');
+            return el ? el.checked === true : false;
+          })()`,
+        );
+        if (result !== true) return;
+      } catch {
+        return;
+      }
+      await delay(POLL_INTERVAL_MS);
+    }
+
+    throw new AssertionError(
+      `expect(locator).not.toBeChecked()\n` +
+        `  Selector: ${this.locator.selector}\n` +
+        `  Expected element NOT to be checked\n` +
+        `  Timeout: ${timeout}ms`,
+    );
+  }
+
+  async toBeEnabled(opts?: { timeout?: number }): Promise<void> {
+    const timeout = opts?.timeout ?? DEFAULT_TIMEOUT_MS;
+    const deadline = Date.now() + timeout;
+
+    while (Date.now() < deadline) {
+      try {
+        const result = await this.locator._evaluate(
+          `(function() {
+            const el = document.querySelector('${escapeSelector(this.locator.selector)}');
+            return el ? !el.disabled : false;
+          })()`,
+        );
+        if (result !== true) return;
+      } catch {
+        return;
+      }
+      await delay(POLL_INTERVAL_MS);
+    }
+
+    throw new AssertionError(
+      `expect(locator).not.toBeEnabled()\n` +
+        `  Selector: ${this.locator.selector}\n` +
+        `  Expected element NOT to be enabled\n` +
+        `  Timeout: ${timeout}ms`,
+    );
+  }
+
+  async toBeDisabled(opts?: { timeout?: number }): Promise<void> {
+    const timeout = opts?.timeout ?? DEFAULT_TIMEOUT_MS;
+    const deadline = Date.now() + timeout;
+
+    while (Date.now() < deadline) {
+      try {
+        const result = await this.locator._evaluate(
+          `(function() {
+            const el = document.querySelector('${escapeSelector(this.locator.selector)}');
+            if (!el) return false;
+            return el.disabled === true;
+          })()`,
+        );
+        if (result !== true) return;
+      } catch {
+        return;
+      }
+      await delay(POLL_INTERVAL_MS);
+    }
+
+    throw new AssertionError(
+      `expect(locator).not.toBeDisabled()\n` +
+        `  Selector: ${this.locator.selector}\n` +
+        `  Expected element NOT to be disabled\n` +
+        `  Timeout: ${timeout}ms`,
+    );
+  }
+
+  async toHaveValue(expected: string, opts?: { timeout?: number }): Promise<void> {
+    const timeout = opts?.timeout ?? DEFAULT_TIMEOUT_MS;
+    const deadline = Date.now() + timeout;
+    let lastActual: string | null = null;
+
+    while (Date.now() < deadline) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) break;
+      try {
+        lastActual = await this.locator.inputValue({ timeout: POLL_INTERVAL_MS });
+        if (lastActual !== expected) return;
+      } catch {
+        return;
+      }
+      await delay(POLL_INTERVAL_MS);
+    }
+
+    throw new AssertionError(
+      `expect(locator).not.toHaveValue(${JSON.stringify(expected)})\n` +
+        `  Selector: ${this.locator.selector}\n` +
+        `  Expected value NOT to be: ${JSON.stringify(expected)}\n` +
+        `  Received: ${JSON.stringify(lastActual)}\n` +
+        `  Timeout: ${timeout}ms`,
+    );
+  }
+
+  async toHaveCount(expected: number, opts?: { timeout?: number }): Promise<void> {
+    const timeout = opts?.timeout ?? DEFAULT_TIMEOUT_MS;
+    const deadline = Date.now() + timeout;
+    let lastActual = -1;
+
+    while (Date.now() < deadline) {
+      try {
+        lastActual = await this.locator.count();
+        if (lastActual !== expected) return;
+      } catch {
+        return;
+      }
+      await delay(POLL_INTERVAL_MS);
+    }
+
+    throw new AssertionError(
+      `expect(locator).not.toHaveCount(${expected})\n` +
+        `  Selector: ${this.locator.selector}\n` +
+        `  Expected count NOT to be: ${expected}\n` +
+        `  Received: ${lastActual}\n` +
+        `  Timeout: ${timeout}ms`,
+    );
+  }
+
+  async toHaveClass(expected: string | RegExp, opts?: { timeout?: number }): Promise<void> {
+    const timeout = opts?.timeout ?? DEFAULT_TIMEOUT_MS;
+    const deadline = Date.now() + timeout;
+    let lastActual: string | null = null;
+
+    while (Date.now() < deadline) {
+      try {
+        const result = await this.locator._evaluate(
+          `(function() {
+            const el = document.querySelector('${escapeSelector(this.locator.selector)}');
+            return el ? el.className : null;
+          })()`,
+        );
+        lastActual = result !== null && result !== undefined ? String(result) : null;
+        if (lastActual !== null) {
+          const classes = lastActual.split(/\s+/).filter(Boolean);
+          const matched =
+            typeof expected === "string"
+              ? classes.includes(expected)
+              : expected.test(lastActual);
+          if (!matched) return;
+        }
+      } catch {
+        return;
+      }
+      await delay(POLL_INTERVAL_MS);
+    }
+
+    throw new AssertionError(
+      `expect(locator).not.toHaveClass(${String(expected)})\n` +
+        `  Selector: ${this.locator.selector}\n` +
+        `  Expected class NOT to match: ${String(expected)}\n` +
+        `  Received: ${JSON.stringify(lastActual)}\n` +
+        `  Timeout: ${timeout}ms`,
+    );
+  }
+
+  async toHaveAttribute(
+    name: string,
+    value: string | RegExp,
+    opts?: { timeout?: number },
+  ): Promise<void> {
+    const timeout = opts?.timeout ?? DEFAULT_TIMEOUT_MS;
+    const deadline = Date.now() + timeout;
+    let lastActual: string | null = null;
+    const escapedName = name.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+
+    while (Date.now() < deadline) {
+      try {
+        const result = await this.locator._evaluate(
+          `(function() {
+            const el = document.querySelector('${escapeSelector(this.locator.selector)}');
+            if (!el) return null;
+            const val = el.getAttribute('${escapedName}');
+            return val === undefined ? null : val;
+          })()`,
+        );
+        lastActual = result !== null && result !== undefined ? String(result) : null;
+        if (lastActual !== null) {
+          const matched =
+            typeof value === "string" ? lastActual === value : value.test(lastActual);
+          if (!matched) return;
+        } else {
+          return; // attribute absent — condition satisfied
+        }
+      } catch {
+        return;
+      }
+      await delay(POLL_INTERVAL_MS);
+    }
+
+    throw new AssertionError(
+      `expect(locator).not.toHaveAttribute(${JSON.stringify(name)}, ${String(value)})\n` +
+        `  Selector: ${this.locator.selector}\n` +
+        `  Expected attribute "${name}" NOT to match: ${String(value)}\n` +
+        `  Received: ${JSON.stringify(lastActual)}\n` +
+        `  Timeout: ${timeout}ms`,
+    );
+  }
+
+  async toContainText(expected: string | RegExp, opts?: { timeout?: number }): Promise<void> {
+    const timeout = opts?.timeout ?? DEFAULT_TIMEOUT_MS;
+    const deadline = Date.now() + timeout;
+    let lastActual: string | null = null;
+
+    while (Date.now() < deadline) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) break;
+      try {
+        lastActual = await this.locator.textContent({ timeout: POLL_INTERVAL_MS });
+        if (lastActual !== null) {
+          const matched =
+            typeof expected === "string"
+              ? lastActual.includes(expected)
+              : expected.test(lastActual);
+          if (!matched) return;
+        }
+      } catch {
+        return;
+      }
+      await delay(POLL_INTERVAL_MS);
+    }
+
+    throw new AssertionError(
+      `expect(locator).not.toContainText(${String(expected)})\n` +
+        `  Selector: ${this.locator.selector}\n` +
+        `  Expected text NOT to contain: ${String(expected)}\n` +
+        `  Received: ${JSON.stringify(lastActual)}\n` +
         `  Timeout: ${timeout}ms`,
     );
   }

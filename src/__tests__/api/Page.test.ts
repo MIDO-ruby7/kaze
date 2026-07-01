@@ -85,6 +85,25 @@ describe("Page", () => {
     expect(loc.selector).toBe("#result");
   });
 
+  it('locator(":text(\\"Submit\\")") returns a ByTextLocator', () => {
+    const loc = page.locator(':text("Submit")');
+    // ByTextLocator extends Locator, so it is an instance of Locator
+    expect(loc).toBeInstanceOf(Locator);
+    // The selector is empty string (ByTextLocator resolves at action time)
+    expect(loc.selector).toBe("");
+  });
+
+  it("locator(':text(\\'Cancel\\')') with single quotes also works", () => {
+    const loc = page.locator(":text('Cancel')");
+    expect(loc).toBeInstanceOf(Locator);
+    expect(loc.selector).toBe("");
+  });
+
+  it("locator with regular selector is not converted", () => {
+    const loc = page.locator("button.submit");
+    expect(loc.selector).toBe("button.submit");
+  });
+
   it("waitForSelector resolves when element is found", async () => {
     (adapter.evaluate as ReturnType<typeof vi.fn>)
       .mockResolvedValueOnce(false)
