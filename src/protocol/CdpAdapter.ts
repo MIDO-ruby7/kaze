@@ -848,6 +848,66 @@ export class CdpAdapter implements ProtocolAdapter {
 
   async dispatchEvent(contextId: ContextId, selector: string, event: string): Promise<void> {
     const escaped = selector.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+    const session = this.getSession(contextId);
+
+    if (event === "click") {
+      // AC-1, AC-2: Use CDP Input.dispatchMouseEvent with element-center coordinates.
+      // This ensures React/Vue synthetic event handlers fire, unlike JS dispatchEvent.
+
+      // Step 1: Get element bounding rect via Runtime.evaluate
+      const rectResult = await session.send<{ result: { value: string } }>(
+        "Runtime.evaluate",
+        {
+          expression: `JSON.stringify(document.querySelector('${escaped}').getBoundingClientRect())`,
+          returnByValue: true,
+        },
+      );
+
+      const rect = JSON.parse(rectResult.result.value) as {
+        left: number;
+        top: number;
+        width: number;
+        height: number;
+      };
+
+      // Error handling: element not visible (zero-size bounding box)
+      if (rect.width === 0 && rect.height === 0) {
+        throw new Error(
+          `Element not visible (zero-size bounding box): ${selector}. ` +
+          `The element may be hidden (display:none, visibility:hidden, or off-screen).`,
+        );
+      }
+
+      const x = rect.left + rect.width / 2;
+      const y = rect.top + rect.height / 2;
+
+      // Error handling: element center outside viewport
+      if (x < 0 || y < 0) {
+        throw new Error(
+          `Element center (${x}, ${y}) is outside the viewport for selector: ${selector}. ` +
+          `Scroll the element into view before clicking.`,
+        );
+      }
+
+      // Step 2: Send CDP mouse events (mousePressed + mouseReleased)
+      await session.send("Input.dispatchMouseEvent", {
+        type: "mousePressed",
+        x,
+        y,
+        button: "left",
+        clickCount: 1,
+      });
+      await session.send("Input.dispatchMouseEvent", {
+        type: "mouseReleased",
+        x,
+        y,
+        button: "left",
+        clickCount: 1,
+      });
+      return;
+    }
+
+    // Non-click events: fall back to JS dispatchEvent (hover, focus, etc.)
     const escapedEvent = event.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
     const expression = `
       (function() {
