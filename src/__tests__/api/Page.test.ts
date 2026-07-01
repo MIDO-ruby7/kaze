@@ -207,9 +207,16 @@ describe("Page", () => {
       // waitForSelector finds the element on the first poll, but dispatchEvent
       // throws "Element not found" once (element detached mid-flight), then
       // on the second iteration waitForSelector finds it again and click succeeds.
+      // After each successful click, the SPA navigation check reads location.href
+      // once (urlBefore) before dispatch and once (urlAfter) after; returning the
+      // same URL causes the nav-wait loop to exit immediately at navDeadline.
+      const sameUrl = "http://example.com/";
       (adapter.evaluate as ReturnType<typeof vi.fn>)
-        .mockResolvedValueOnce(true)   // 1st waitForSelector: found
-        .mockResolvedValueOnce(true);  // 2nd waitForSelector (after retry): found
+        .mockResolvedValueOnce(true)      // 1st waitForSelector: found
+        .mockResolvedValueOnce(sameUrl)   // urlBefore (1st attempt)
+        .mockResolvedValueOnce(true)      // 2nd waitForSelector (after retry): found
+        .mockResolvedValueOnce(sameUrl)   // urlBefore (2nd attempt)
+        .mockResolvedValue(sameUrl);      // urlAfter polling — same URL, exits when navDeadline reached
       (adapter.dispatchEvent as ReturnType<typeof vi.fn>)
         .mockRejectedValueOnce(new Error("Element not found: #btn"))
         .mockResolvedValueOnce(undefined);

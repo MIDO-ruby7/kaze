@@ -832,7 +832,7 @@ export class CdpAdapter implements ProtocolAdapter {
     const result = await session.send<{
       result: { type: string; value?: unknown; description?: string };
       exceptionDetails?: unknown;
-    }>("Runtime.evaluate", { expression, returnByValue: true });
+    }>("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true });
 
     if (result.exceptionDetails) {
       throw new Error(`Evaluation threw an exception: ${JSON.stringify(result.exceptionDetails)}`);

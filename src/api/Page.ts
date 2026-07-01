@@ -134,7 +134,20 @@ export class Page {
       const remaining = deadline - Date.now();
       await this.waitForSelector(selector, { timeout: remaining });
       try {
+        // Capture URL before click to detect SPA navigation after click
+        const urlBefore = await this.adapter.evaluate(this.contextId, "location.href") as string;
         await this.adapter.dispatchEvent(this.contextId, selector, "click");
+
+        // Wait up to 1000ms for URL change (SPA navigation), but never
+        // beyond the outer click deadline. Exits immediately when navigation
+        // is detected; adds no delay for non-navigation clicks.
+        const navDeadline = Math.min(Date.now() + 1000, deadline);
+        while (Date.now() < navDeadline && !this._cancelled) {
+          const urlAfter = await this.adapter.evaluate(this.contextId, "location.href") as string;
+          if (urlAfter !== urlBefore) break;
+          await new Promise(r => setTimeout(r, 50));
+        }
+
         return;
       } catch (err) {
         if (isElementNotFound(err) && Date.now() < deadline) continue;
