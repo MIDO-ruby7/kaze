@@ -93,19 +93,91 @@ npx kaze
 
 ---
 
-## Playwright から 30 秒で移行
+## Playwright から移行する
+
+### ステップ 1 — インストール
+
+```bash
+pnpm add -D @midori/kaze tsx
+pnpm remove @playwright/test   # 任意
+```
+
+### ステップ 2 — import と引数の変更
+
+95% のテストで必要な変更はこれだけです：
 
 ```diff
 - import { test, expect } from "@playwright/test"
 + import { test, expect } from "@midori/kaze"
 
-- test("例", async ({ page }) => {
-+ test("例", async (page) => {
-    await page.goto("/")
+- test("ユーザーがログインできる", async ({ page }) => {
++ test("ユーザーがログインできる", async (page) => {
+    await page.goto("/login")
+    await page.fill("#email", "user@example.com")
+    await page.click("#submit")
+    await expect(page).toHaveURL("/dashboard")
   })
 ```
 
-変更点は 2 箇所だけ：インポートパスと引数の書き方。あとは全て同じです。
+### ステップ 3 — 設定ファイルを置き換える
+
+```diff
+- // playwright.config.ts
+- import { defineConfig } from "@playwright/test"
++ // kaze.config.ts
++ import { defineConfig } from "@midori/kaze"
+
+  export default defineConfig({
+    testMatch: ["e2e/**/*.spec.ts"],
+    timeout: 30_000,
+    workers: 4,
+  })
+```
+
+### ステップ 4 — 実行
+
+```bash
+npx kaze          # playwright test の代わりに
+npx kaze --watch  # playwright test --ui の代わりに
+```
+
+### 変わること
+
+| Playwright | kaze |
+|------------|------|
+| `async ({ page })` | `async (page)` — destructuring なし |
+| `@playwright/test` | `@midori/kaze` |
+| `playwright.config.ts` | `kaze.config.ts` |
+| `test.use({ baseURL })` | 環境変数またはURL手動プレフィックス |
+
+### 未対応機能
+
+| 機能 | 状況 |
+|---------|--------|
+| `page.getByRole()` / `getByText()` | ❌ `page.locator()` を使う |
+| `test.use({ storageState })` | ❌ `beforeEach` + `page.evaluate` で代替 |
+| Firefox / WebKit | ❌ Chromium のみ |
+| `test.step()` | ❌ 未実装 |
+| `page.waitForNavigation()` | ❌ `page.waitForURL()` を使う |
+
+### compat shim で段階的に移行
+
+大量のテストがある場合、`compat/shim.mjs` を使って段階的に移行できます。
+`async ({ page }) => {}` のままで動作します：
+
+```diff
+- import { test, expect } from "@playwright/test"
++ import { test, expect } from "./playwright-compat.mjs"
+
+# コードはそのまま — { page } の destructuring が動作する
+test("既存のテスト", async ({ page }) => {   // ← 変更不要！
+  await page.goto("/")
+})
+```
+
+```bash
+KAZE_BASE_URL=http://localhost:3000 npx kaze tests/
+```
 
 > 互換性の詳細は [`docs/playwright-compat.md`](docs/playwright-compat.md) を参照してください。
 

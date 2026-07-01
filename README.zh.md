@@ -93,19 +93,91 @@ npx kaze
 
 ---
 
-## 30 秒从 Playwright 迁移
+## 从 Playwright 迁移
+
+### 第一步 — 安装
+
+```bash
+pnpm add -D @midori/kaze tsx
+pnpm remove @playwright/test   # 可选
+```
+
+### 第二步 — 修改导入和参数写法
+
+95% 的测试只需要这一处改动：
 
 ```diff
 - import { test, expect } from "@playwright/test"
 + import { test, expect } from "@midori/kaze"
 
-- test("示例", async ({ page }) => {
-+ test("示例", async (page) => {
-    await page.goto("/")
+- test("用户可以登录", async ({ page }) => {
++ test("用户可以登录", async (page) => {
+    await page.goto("/login")
+    await page.fill("#email", "user@example.com")
+    await page.click("#submit")
+    await expect(page).toHaveURL("/dashboard")
   })
 ```
 
-只需两处修改：导入路径和参数写法，其余完全相同。
+### 第三步 — 替换配置文件
+
+```diff
+- // playwright.config.ts
++ // kaze.config.ts
+- import { defineConfig } from "@playwright/test"
++ import { defineConfig } from "@midori/kaze"
+
+  export default defineConfig({
+    testMatch: ["e2e/**/*.spec.ts"],
+    timeout: 30_000,
+    workers: 4,
+  })
+```
+
+### 第四步 — 运行
+
+```bash
+npx kaze          # 替代 playwright test
+npx kaze --watch  # 替代 playwright test --ui
+```
+
+### 有什么变化
+
+| Playwright | kaze |
+|------------|------|
+| `async ({ page })` | `async (page)` — 无解构 |
+| `@playwright/test` | `@midori/kaze` |
+| `playwright.config.ts` | `kaze.config.ts` |
+| `test.use({ baseURL })` | 环境变量或手动拼接 URL |
+
+### 暂不支持的功能
+
+| 功能 | 状态 |
+|------|------|
+| `page.getByRole()` / `getByText()` | ❌ 使用 `page.locator()` |
+| `test.use({ storageState })` | ❌ 用 `beforeEach` + `page.evaluate` 替代 |
+| Firefox / WebKit | ❌ 仅支持 Chromium |
+| `test.step()` | ❌ 未实现 |
+| `page.waitForNavigation()` | ❌ 使用 `page.waitForURL()` |
+
+### 使用 compat shim 渐进式迁移
+
+如果你有大量现有测试，可以使用 `compat/shim.mjs` 进行渐进式迁移，
+无需修改 `async ({ page }) => {}` 的写法：
+
+```diff
+- import { test, expect } from "@playwright/test"
++ import { test, expect } from "./playwright-compat.mjs"
+
+# 代码保持不变 — { page } 解构依然有效
+test("现有测试", async ({ page }) => {   // ← 无需修改！
+  await page.goto("/")
+})
+```
+
+```bash
+KAZE_BASE_URL=http://localhost:3000 npx kaze tests/
+```
 
 > 完整兼容性表请参阅 [`docs/playwright-compat.md`](docs/playwright-compat.md)。
 

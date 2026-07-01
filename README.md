@@ -94,21 +94,109 @@ That's it. No config required.
 
 ---
 
-## Migrate from Playwright in 30 seconds
+## Migrating from Playwright
+
+### Step 1 — Install kaze
+
+```bash
+pnpm add -D @midori/kaze tsx
+pnpm remove @playwright/test   # optional
+```
+
+### Step 2 — Change the import and argument shape
+
+This is the only required code change in 95% of tests:
 
 ```diff
 - import { test, expect } from "@playwright/test"
 + import { test, expect } from "@midori/kaze"
 
-- test("example", async ({ page }) => {
-+ test("example", async (page) => {
-    await page.goto("/")
+- test("user can log in", async ({ page }) => {
++ test("user can log in", async (page) => {
+    await page.goto("/login")
+    await page.fill("#email", "user@example.com")
+    await page.click("#submit")
+    await expect(page).toHaveURL("/dashboard")
   })
 ```
 
-Two changes: the import path and the argument shape. Everything else is identical.
+### Step 3 — Replace the config file
 
-> See [`docs/playwright-compat.md`](docs/playwright-compat.md) for the full compatibility table.
+```diff
+- // playwright.config.ts
+- import { defineConfig } from "@playwright/test"
++ // kaze.config.ts
++ import { defineConfig } from "@midori/kaze"
+
+  export default defineConfig({
+-   use: { baseURL: "http://localhost:3000" },
+-   testDir: "./e2e",
++   testMatch: ["e2e/**/*.spec.ts"],
+    timeout: 30_000,
+    workers: 4,
+  })
+```
+
+> kaze does not have a `baseURL` option yet. Prefix URLs manually or use an env var.
+
+### Step 4 — Run
+
+```bash
+npx kaze          # replaces: npx playwright test
+npx kaze --watch  # replaces: npx playwright test --ui
+```
+
+### What changes
+
+| Playwright | kaze |
+|------------|------|
+| `async ({ page })` | `async (page)` — no destructuring |
+| `@playwright/test` | `@midori/kaze` |
+| `playwright.config.ts` | `kaze.config.ts` |
+| `test.use({ baseURL })` | env var or manual prefix |
+| `--reporter=html` | `--reporter=html` ✓ same |
+| `--shard=1/4` | `--shard=1/4` ✓ same |
+
+### What is not supported (yet)
+
+| Feature | Status |
+|---------|--------|
+| `page.getByRole()` / `getByText()` / `getByLabel()` | ❌ Use `page.locator()` |
+| `test.use({ storageState })` | ❌ Use `beforeEach` + `page.evaluate` |
+| Multiple browsers (Firefox, WebKit) | ❌ Chromium only |
+| `test.step()` | ❌ Not implemented |
+| `request` fixture (API testing) | ❌ Use `page.evaluate` + fetch |
+| `page.waitForNavigation()` | ❌ Use `page.waitForURL()` |
+| `expect.soft()` | ❌ Not implemented |
+
+### Gradual migration with the compat shim
+
+If you have hundreds of existing tests, use the drop-in compat shim for a gradual migration.
+The shim converts `async ({ page }) => {}` to kaze's `async (page) => {}` at runtime:
+
+```bash
+# 1. Copy the shim into your project
+cp node_modules/@midori/kaze/compat/shim.mjs tests/playwright-compat.mjs
+```
+
+```diff
+- import { test, expect } from "@playwright/test"
++ import { test, expect } from "./playwright-compat.mjs"
+
+# No other changes needed — { page } destructuring works as-is
+test("existing test", async ({ page }) => {   // ← unchanged!
+  await page.goto("/")
+})
+```
+
+```bash
+# 2. Run with kaze
+KAZE_BASE_URL=http://localhost:3000 npx kaze tests/
+```
+
+Migrate tests file-by-file to the native kaze API when you're ready.
+
+> See [`docs/playwright-compat.md`](docs/playwright-compat.md) for the full API compatibility table.
 
 ---
 
