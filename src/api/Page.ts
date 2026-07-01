@@ -12,7 +12,7 @@
 import type { PooledContext } from "../pool/types.js";
 import type { ProtocolAdapter } from "../protocol/index.js";
 
-import { Locator } from "./Locator.js";
+import { Locator, ByTextLocator, type GetByTextOptions } from "./Locator.js";
 import { Route, type FulfillOptions } from "./Route.js";
 import { escapeSelector } from "./utils.js";
 
@@ -351,6 +351,126 @@ export class Page {
   /** Create a Locator for elements matching `selector` within this page. */
   locator(selector: string): Locator {
     return new Locator(this, selector);
+  }
+
+  /**
+   * AC-1 (Issue #44): Return a Locator for the first element whose visible
+   * text matches `text`.
+   *
+   * - Default (exact: false): partial match — element's trimmed textContent
+   *   includes `text`.
+   * - { exact: true }: element's trimmed textContent equals `text` exactly.
+   *
+   * Implementation uses an evaluate-based DOM scan that assigns a unique
+   * `data-kaze-bytext-*` attribute so subsequent actions can target the
+   * element precisely (same pattern as NthLocator).
+   */
+  getByText(text: string, opts?: GetByTextOptions): Locator {
+    const exact = opts?.exact ?? false;
+    const escapedText = text.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+    return new ByTextLocator(this, (tag: string) => {
+      if (exact) {
+        return `(function(){
+          var els = document.querySelectorAll('*');
+          for (var i = 0; i < els.length; i++) {
+            var el = els[i];
+            if (el.children.length === 0 || el.textContent.trim() === '${escapedText}') {
+              if (el.textContent.trim() === '${escapedText}') {
+                el.setAttribute('${tag}', '1');
+                break;
+              }
+            }
+          }
+        })()`;
+      }
+      return `(function(){
+        var els = document.querySelectorAll('*');
+        for (var i = 0; i < els.length; i++) {
+          var el = els[i];
+          if (el.textContent.includes('${escapedText}') && el.children.length === 0) {
+            el.setAttribute('${tag}', '1');
+            break;
+          }
+        }
+      })()`;
+    });
+  }
+
+  /**
+   * AC-2 (Issue #44): Return a Locator for the form control associated with
+   * a label whose text matches `text`.
+   *
+   * Supports:
+   * - `<label for="id">text</label><input id="id">` (for/id association)
+   * - `<label>text<input></label>` (nesting)
+   *
+   * Default: partial text match. Pass `{ exact: true }` for exact match.
+   */
+  getByLabel(text: string, opts?: GetByTextOptions): Locator {
+    const exact = opts?.exact ?? false;
+    const escapedText = text.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+    return new ByTextLocator(this, (tag: string) => {
+      const matchExpr = exact
+        ? `lbl.textContent.trim() === '${escapedText}'`
+        : `lbl.textContent.includes('${escapedText}')`;
+      return `(function(){
+        var labels = document.querySelectorAll('label');
+        for (var i = 0; i < labels.length; i++) {
+          var lbl = labels[i];
+          if (${matchExpr}) {
+            var ctrl = null;
+            // for/id association
+            if (lbl.htmlFor) {
+              ctrl = document.getElementById(lbl.htmlFor);
+            }
+            // nested control
+            if (!ctrl) {
+              ctrl = lbl.querySelector('input,select,textarea');
+            }
+            if (ctrl) {
+              ctrl.setAttribute('${tag}', '1');
+              break;
+            }
+          }
+        }
+      })()`;
+    });
+  }
+
+  /**
+   * AC-3 (Issue #44): Return a Locator for an element whose placeholder
+   * attribute matches `text`.
+   *
+   * Default: partial match (`[placeholder*="text"]`-style).
+   * Pass `{ exact: true }` for exact match (`[placeholder="text"]`).
+   */
+  getByPlaceholder(text: string, opts?: GetByTextOptions): Locator {
+    const exact = opts?.exact ?? false;
+    const escapedText = text.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+    return new ByTextLocator(this, (tag: string) => {
+      const matchExpr = exact
+        ? `el.getAttribute('placeholder') === '${escapedText}'`
+        : `(el.getAttribute('placeholder') || '').includes('${escapedText}')`;
+      return `(function(){
+        var els = document.querySelectorAll('[placeholder]');
+        for (var i = 0; i < els.length; i++) {
+          var el = els[i];
+          if (${matchExpr}) {
+            el.setAttribute('${tag}', '1');
+            break;
+          }
+        }
+      })()`;
+    });
+  }
+
+  /**
+   * AC-4 (Issue #44): Return a Locator for `[data-testid="id"]`.
+   *
+   * This is a simple CSS selector locator — no lazy evaluation needed.
+   */
+  getByTestId(id: string): Locator {
+    return new Locator(this, `[data-testid="${id}"]`);
   }
 
   /**
