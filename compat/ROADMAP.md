@@ -1,7 +1,7 @@
 # kaze Playwright Compatibility Roadmap
 
 > Last updated: 2026-07-02
-> **Best compatibility: 77% (20/26 tests across 10 OSS)**
+> **Best compatibility: 77% (20/26 tests across 10 OSS) — STABLE**
 
 ---
 
@@ -16,7 +16,7 @@
 | v5 | 20/26 | 77% | awaitPromise, SPA wait, localStorage clear |
 | v6 | 19/26 | 73% | ※ Storage.clearDataForOrigin リグレッション期間 |
 | v7 | 19/26 | 73% | ※ click 2000ms ループリグレッション期間 |
-| **v8** | **20/26** | **77%** | click 軽量化 (150ms+300ms), 安定版 |
+| **v11+** | **20/26** | **77%** | mouseMoved revert, NthLocator all(), STABLE |
 
 ---
 
