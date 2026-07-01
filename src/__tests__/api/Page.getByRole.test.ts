@@ -134,7 +134,7 @@ describe("Page.getByRole() — AC-2: implicit HTML role selectors", () => {
     await loc.click();
     const calls = (adapter.evaluate as ReturnType<typeof vi.fn>).mock.calls;
     const script = calls[0][1] as string;
-    expect(script).toMatch(/data-kaze-role-/);
+    expect(script).toMatch(/data-kz-role-/);
   });
 });
 

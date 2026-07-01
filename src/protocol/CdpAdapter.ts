@@ -616,14 +616,26 @@ export class CdpAdapter implements ProtocolAdapter {
   async resetContext(contextId: ContextId): Promise<void> {
     const session = this.getSession(contextId);
 
+    // 1. Cookies を削除
     await session.send("Network.clearBrowserCookies");
-    // localStorage/sessionStorage は origin-scoped なので評価で削除
+
+    // 2. Storage を削除（localStorage, sessionStorage, indexedDB）
+    // Storage.clearDataForOrigin は CDP の安定した API。失敗時は JS フォールバック。
     try {
-      await session.send("Runtime.evaluate", {
-        expression: "localStorage.clear(); sessionStorage.clear();",
-        returnByValue: false,
+      await session.send("Storage.clearDataForOrigin", {
+        origin: "*",
+        storageTypes: "local_storage,session_storage,indexeddb",
       });
-    } catch { /* ページが about:blank 等でストレージなし → 無視 */ }
+    } catch {
+      // フォールバック: JS で削除（about:blank 等でストレージがない場合も含む）
+      try {
+        await session.send("Runtime.evaluate", {
+          expression: "localStorage.clear(); sessionStorage.clear();",
+          returnByValue: false,
+          awaitPromise: false,
+        });
+      } catch { /* about:blank 等でストレージなし → 無視 */ }
+    }
 
     // AC-4: disable request interception if it was enabled for this context
     if (this.interceptionEnabled.get(contextId)) {

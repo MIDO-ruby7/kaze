@@ -154,10 +154,10 @@ describe("Locator", () => {
       expect(locators).toHaveLength(2);
       expect(locators[0]).toBeInstanceOf(Locator);
       expect(locators[1]).toBeInstanceOf(Locator);
-      // Each Locator should use a unique timestamped data-kaze-idx-* attribute
+      // Each Locator should use a unique timestamped data-kz-all-* attribute
       // to avoid cross-test attribute pollution (selector includes per-call unique suffix)
-      expect(locators[0].selector).toMatch(/^\[data-kaze-idx-\d+-[a-z0-9]+=["']?0["']?\]$/);
-      expect(locators[1].selector).toMatch(/^\[data-kaze-idx-\d+-[a-z0-9]+=["']?1["']?\]$/);
+      expect(locators[0].selector).toMatch(/^\[data-kz-all-\d+-[a-z0-9]+=["']?0["']?\]$/);
+      expect(locators[1].selector).toMatch(/^\[data-kz-all-\d+-[a-z0-9]+=["']?1["']?\]$/);
     });
 
     it("passes a script that assigns data-kaze-idx attributes", async () => {
@@ -167,7 +167,7 @@ describe("Locator", () => {
       await locator.all();
       const calls = (adapter.evaluate as ReturnType<typeof vi.fn>).mock.calls;
       const attrScript = calls[1][1] as string;
-      expect(attrScript).toContain("data-kaze-idx");
+      expect(attrScript).toContain("data-kz-all-");
       expect(attrScript).toContain("querySelectorAll");
     });
 
@@ -447,10 +447,10 @@ describe("Locator", () => {
       const first = commaLocator.first();
       const text = await first.textContent();
       expect(text).toBe("heading");
-      // The _resolveNth evaluate call must include a tag matching data-kaze-nth-<digits>-<alphanum>
+      // The _resolveNth evaluate call must include a tag matching data-kz-nth-<digits>-<alphanum>
       const calls = (adapter.evaluate as ReturnType<typeof vi.fn>).mock.calls;
       const resolveScript = calls[0][1] as string;
-      expect(resolveScript).toMatch(/data-kaze-nth-\d+-[a-z0-9]+/);
+      expect(resolveScript).toMatch(/data-kz-nth-\d+-[a-z0-9]+/);
     });
 
     it("_resolveNth does NOT escape the comma in the parent selector (AC-4)", async () => {

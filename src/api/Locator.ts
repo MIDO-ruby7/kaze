@@ -84,10 +84,11 @@ export class Locator {
     if (n === 0) return [];
 
     const escapedSel = escapeSelector(this.selector);
-    // Use a timestamped unique tag to avoid cross-test attribute pollution.
-    // data-kaze-idx (no suffix) would persist across tests if the DOM is reused,
-    // causing selector collisions. A unique suffix per all() call prevents this.
-    const tag = `data-kaze-idx-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    // Use a distinct "kz-all" prefix to avoid collisions with NthLocator
+    // ("kz-nth"), ByTextLocator ("kz-txt"), ByRoleLocator ("kz-role"), and
+    // FilterLocator ("kaze-filter"). A timestamp+random suffix guarantees
+    // uniqueness across concurrent all() calls on the same page.
+    const tag = `data-kz-all-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     await this.page._evaluate(
       `(function() {
         const els = document.querySelectorAll('${escapedSel}');
@@ -678,7 +679,7 @@ export class ByTextLocator extends Locator {
 
   /** Tag the matching element and return the attribute selector for it. */
   private async _resolve(): Promise<string> {
-    const tag = `data-kaze-bytext-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const tag = `data-kz-txt-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     await (this.page as Page)._evaluate(this._script(tag));
     return `[${tag}]`;
   }
@@ -758,8 +759,9 @@ export class NthLocator extends Locator {
     // selectors are passed directly to querySelectorAll without modification.
     const rawSel = this._parentSelector.replace(/'/g, "\\'");
     const idx = this._index;
-    // AC-3: append a random suffix to guarantee uniqueness across concurrent calls.
-    const tag = `data-kaze-nth-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    // AC-3: use "kz-nth" prefix (distinct from kz-all / kz-txt / kz-role)
+    // and append a random suffix to guarantee uniqueness across concurrent calls.
+    const tag = `data-kz-nth-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     await (this.page as any)._evaluate(
       `(function(){
         const els = document.querySelectorAll('${rawSel}');
@@ -832,7 +834,7 @@ export class ByRoleLocator extends Locator {
 
   /** Tag the matching element and return the unique attribute selector. */
   private async _resolve(): Promise<string> {
-    const tag = `data-kaze-role-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const tag = `data-kz-role-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     const script = buildByRoleScript(this._role, this._opts, tag);
     await (this.page as Page)._evaluate(script);
     return `[${tag}]`;
