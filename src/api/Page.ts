@@ -138,14 +138,18 @@ export class Page {
         const urlBefore = await this.adapter.evaluate(this.contextId, "location.href") as string;
         await this.adapter.dispatchEvent(this.contextId, selector, "click");
 
-        // Wait up to 1000ms for URL change (SPA navigation), but never
+        // Wait up to 2000ms for URL change (SPA navigation), but never
         // beyond the outer click deadline. Exits immediately when navigation
         // is detected; adds no delay for non-navigation clicks.
-        const navDeadline = Math.min(Date.now() + 1000, deadline);
+        const navDeadline = Math.min(Date.now() + 2000, deadline);
         while (Date.now() < navDeadline && !this._cancelled) {
           const urlAfter = await this.adapter.evaluate(this.contextId, "location.href") as string;
-          if (urlAfter !== urlBefore) break;
-          await new Promise(r => setTimeout(r, 50));
+          if (urlAfter !== urlBefore) {
+            // URL changed — wait 200ms for DOM to stabilise after SPA navigation
+            await new Promise(r => setTimeout(r, 200));
+            break;
+          }
+          await new Promise(r => setTimeout(r, 100));
         }
 
         return;

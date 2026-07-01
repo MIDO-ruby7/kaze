@@ -12,6 +12,7 @@ import type { Page } from "./Page.js";
 import { escapeSelector } from "./utils.js";
 
 const DEFAULT_TIMEOUT_MS = 5_000;
+const DEFAULT_VISIBILITY_TIMEOUT_MS = 10_000;
 const POLL_INTERVAL_MS = 100;
 
 // ---------------------------------------------------------------------------
@@ -83,7 +84,7 @@ class LocatorExpect implements LocatorMatchers {
   }
 
   async toBeVisible(opts?: { timeout?: number }): Promise<void> {
-    const timeout = opts?.timeout ?? DEFAULT_TIMEOUT_MS;
+    const timeout = opts?.timeout ?? DEFAULT_VISIBILITY_TIMEOUT_MS;
     const deadline = Date.now() + timeout;
 
     while (Date.now() < deadline) {
@@ -448,7 +449,7 @@ class NegatedLocatorExpect implements LocatorMatchers {
   }
 
   async toBeVisible(opts?: { timeout?: number }): Promise<void> {
-    const timeout = opts?.timeout ?? DEFAULT_TIMEOUT_MS;
+    const timeout = opts?.timeout ?? DEFAULT_VISIBILITY_TIMEOUT_MS;
     const deadline = Date.now() + timeout;
 
     while (Date.now() < deadline) {

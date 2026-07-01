@@ -147,7 +147,7 @@ export const expect = (target) => {
 
   // toBeGreaterThan for numeric content
   base.toBeGreaterThan = async (n, opts) => {
-    const timeout = opts?.timeout ?? 5000
+    const timeout = opts?.timeout ?? 10000
     const deadline = Date.now() + timeout
     while (Date.now() < deadline) {
       try {
