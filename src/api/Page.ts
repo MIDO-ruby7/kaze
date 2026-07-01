@@ -374,11 +374,9 @@ export class Page {
           var els = document.querySelectorAll('*');
           for (var i = 0; i < els.length; i++) {
             var el = els[i];
-            if (el.children.length === 0 || el.textContent.trim() === '${escapedText}') {
-              if (el.textContent.trim() === '${escapedText}') {
-                el.setAttribute('${tag}', '1');
-                break;
-              }
+            if (el.children.length === 0 && el.textContent.trim() === '${escapedText}') {
+              el.setAttribute('${tag}', '1');
+              break;
             }
           }
         })()`;

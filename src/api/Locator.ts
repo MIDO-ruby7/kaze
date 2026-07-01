@@ -358,7 +358,7 @@ export class ByTextLocator extends Locator {
 
   /** Tag the matching element and return the attribute selector for it. */
   private async _resolve(): Promise<string> {
-    const tag = `data-kaze-bytext-${Date.now()}`;
+    const tag = `data-kaze-bytext-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     await (this.page as Page)._evaluate(this._script(tag));
     return `[${tag}]`;
   }
@@ -394,6 +394,18 @@ export class ByTextLocator extends Locator {
   }
   async hover(opts?: Parameters<Locator["hover"]>[0]): Promise<void> {
     return this._withResolved(l => l.hover(opts));
+  }
+  async check(opts?: Parameters<Locator["check"]>[0]): Promise<void> {
+    return this._withResolved(l => l.check(opts));
+  }
+  async uncheck(opts?: Parameters<Locator["uncheck"]>[0]): Promise<void> {
+    return this._withResolved(l => l.uncheck(opts));
+  }
+  async selectOption(
+    value: Parameters<Locator["selectOption"]>[0],
+    opts?: Parameters<Locator["selectOption"]>[1],
+  ): Promise<void> {
+    return this._withResolved(l => l.selectOption(value, opts));
   }
   async count(): Promise<number> {
     const sel = await this._resolve();
