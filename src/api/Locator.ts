@@ -331,6 +331,89 @@ export class Locator {
 }
 
 /**
+ * GetByTextOptions — options for getByText / getByLabel / getByPlaceholder.
+ */
+export interface GetByTextOptions {
+  /** When true, the text must match exactly (case-sensitive, no trimming). Default: false (partial match). */
+  exact?: boolean;
+}
+
+/**
+ * ByTextLocator — a Locator that resolves by tagging a matching element at
+ * action time, using an evaluate-based DOM scan.
+ *
+ * This mirrors the NthLocator pattern: the actual CSS selector is unknown until
+ * the action is about to be performed. Before each action, a unique attribute
+ * (e.g. `data-kaze-bytext-<timestamp>`) is assigned to the first matching
+ * element so that the base Locator methods can address it precisely.
+ */
+export class ByTextLocator extends Locator {
+  constructor(
+    page: Page,
+    private readonly _script: (tag: string) => string,
+  ) {
+    // The real selector is not known yet; use an empty placeholder.
+    super(page, "");
+  }
+
+  /** Tag the matching element and return the attribute selector for it. */
+  private async _resolve(): Promise<string> {
+    const tag = `data-kaze-bytext-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    await (this.page as Page)._evaluate(this._script(tag));
+    return `[${tag}]`;
+  }
+
+  private async _withResolved<T>(fn: (loc: Locator) => Promise<T>): Promise<T> {
+    const sel = await this._resolve();
+    return fn(new Locator(this.page as Page, sel));
+  }
+
+  async click(opts?: Parameters<Locator["click"]>[0]): Promise<void> {
+    return this._withResolved(l => l.click(opts));
+  }
+  async fill(value: string, opts?: Parameters<Locator["fill"]>[1]): Promise<void> {
+    return this._withResolved(l => l.fill(value, opts));
+  }
+  async textContent(opts?: Parameters<Locator["textContent"]>[0]): Promise<string | null> {
+    return this._withResolved(l => l.textContent(opts));
+  }
+  async innerText(opts?: Parameters<Locator["innerText"]>[0]): Promise<string> {
+    return this._withResolved(l => l.innerText(opts));
+  }
+  async getAttribute(name: string, opts?: Parameters<Locator["getAttribute"]>[1]): Promise<string | null> {
+    return this._withResolved(l => l.getAttribute(name, opts));
+  }
+  async inputValue(opts?: Parameters<Locator["inputValue"]>[0]): Promise<string> {
+    return this._withResolved(l => l.inputValue(opts));
+  }
+  async isVisible(): Promise<boolean> {
+    return this._withResolved(l => l.isVisible());
+  }
+  async isEnabled(): Promise<boolean> {
+    return this._withResolved(l => l.isEnabled());
+  }
+  async hover(opts?: Parameters<Locator["hover"]>[0]): Promise<void> {
+    return this._withResolved(l => l.hover(opts));
+  }
+  async check(opts?: Parameters<Locator["check"]>[0]): Promise<void> {
+    return this._withResolved(l => l.check(opts));
+  }
+  async uncheck(opts?: Parameters<Locator["uncheck"]>[0]): Promise<void> {
+    return this._withResolved(l => l.uncheck(opts));
+  }
+  async selectOption(
+    value: Parameters<Locator["selectOption"]>[0],
+    opts?: Parameters<Locator["selectOption"]>[1],
+  ): Promise<void> {
+    return this._withResolved(l => l.selectOption(value, opts));
+  }
+  async count(): Promise<number> {
+    const sel = await this._resolve();
+    return new Locator(this.page as Page, sel).count();
+  }
+}
+
+/**
  * NthLocator — a Locator that targets the nth element matching a selector.
  * Before each action, it evaluates querySelectorAll(selector)[index] in the
  * browser and assigns a unique `data-kaze-nth` attribute so the base Locator

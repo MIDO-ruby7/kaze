@@ -53,6 +53,10 @@ test('my test', async (page) => { ... });
 | `page.textContent(selector)` | Supported | auto-waiting; default timeout 30000ms; accepts `{ timeout }` option |
 | `page.waitForSelector(selector, opts?)` | Supported | polls every 100ms; default timeout 30000ms; accepts `{ timeout }` option |
 | `page.locator(selector)` | Supported | Returns `Locator` |
+| `page.getByText(text, opts?)` | Supported | Partial match by default; `{ exact: true }` for exact match; evaluate-based DOM scan |
+| `page.getByLabel(text, opts?)` | Supported | Finds input/select/textarea via `for`/id association or nesting; partial match by default |
+| `page.getByPlaceholder(text, opts?)` | Supported | Partial match by default (`placeholder` attribute); `{ exact: true }` for exact match |
+| `page.getByTestId(id)` | Supported | Returns `Locator` for `[data-testid="id"]` |
 | `page.url()` | Supported | |
 | `page.title()` | Supported | Returns `document.title` |
 | `page.close()` | Supported | |
@@ -84,8 +88,8 @@ test('my test', async (page) => { ... });
 | `locator.isVisible()` | Supported | Immediate (no auto-waiting); checks computed style |
 | `locator.isEnabled()` | Supported | Immediate (no auto-waiting); checks `el.disabled` |
 | `locator.inputValue()` | Supported | auto-waiting; returns `el.value` of input/textarea |
-| `locator.nth(index)` | Not supported | — |
-| `locator.first()` / `locator.last()` | Not supported | — |
+| `locator.nth(index)` | Supported | Returns `NthLocator`; 0-indexed |
+| `locator.first()` / `locator.last()` | Supported | Returns `NthLocator` |
 | `locator.filter()` | Not supported | — |
 | `locator.waitFor()` | Not supported | Use `page.waitForSelector()` |
 | `locator.getAttribute(name, opts?)` | Supported | auto-waiting; returns `null` when attribute absent; default timeout 30000ms |
