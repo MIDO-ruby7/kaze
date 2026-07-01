@@ -854,35 +854,40 @@ export class CdpAdapter implements ProtocolAdapter {
       // AC-1, AC-2: Use CDP Input.dispatchMouseEvent with element-center coordinates.
       // This ensures React/Vue synthetic event handlers fire, unlike JS dispatchEvent.
 
-      // Step 1: Get element bounding rect via Runtime.evaluate
+      // Step 1: Get element bounding rect + viewport size in one Runtime.evaluate call
       // B-1: null check is inside the evaluate expression to avoid opaque crashes
-      const rectResult = await session.send<{ result: { value: string | null } }>(
+      const combined = await session.send<{ result: { value: string | null } }>(
         "Runtime.evaluate",
         {
-          expression: `(function() {
+          expression: `(function(){
       const el = document.querySelector('${escaped}');
       if (!el) return null;
       const r = el.getBoundingClientRect();
-      return JSON.stringify({ left: r.left, top: r.top, width: r.width, height: r.height });
+      return JSON.stringify({
+        left: r.left, top: r.top, w: r.width, h: r.height,
+        vw: window.innerWidth, vh: window.innerHeight
+      });
     })()`,
           returnByValue: true,
         },
       );
 
       // B-1: element not found
-      if (!rectResult.result.value) {
+      if (!combined.result.value) {
         throw new Error(`Element not found for click: "${selector}"`);
       }
 
-      const rect = JSON.parse(rectResult.result.value) as {
+      const rect = JSON.parse(combined.result.value) as {
         left: number;
         top: number;
-        width: number;
-        height: number;
+        w: number;
+        h: number;
+        vw: number;
+        vh: number;
       };
 
       // Error handling: element not visible (zero-size bounding box)
-      if (rect.width === 0 && rect.height === 0) {
+      if (rect.w === 0 && rect.h === 0) {
         throw new Error(
           `Element not visible (zero-size bounding box): ${selector}. ` +
           `The element may be hidden (display:none, visibility:hidden, or off-screen).`,
@@ -890,21 +895,44 @@ export class CdpAdapter implements ProtocolAdapter {
       }
 
       // B-2: round to integer coordinates to avoid sub-pixel CDP errors
-      const x = Math.round(rect.left + rect.width / 2);
-      const y = Math.round(rect.top + rect.height / 2);
+      let x = Math.round(rect.left + rect.w / 2);
+      let y = Math.round(rect.top + rect.h / 2);
 
-      // B-3: get viewport size and check upper bounds
-      const vpResult = await session.send<{ result: { value: string } }>(
-        "Runtime.evaluate",
-        { expression: `JSON.stringify({ w: window.innerWidth, h: window.innerHeight })`, returnByValue: true },
-      );
-      const vp = JSON.parse(vpResult.result.value) as { w: number; h: number };
-
-      // Error handling: element center outside viewport
-      if (x < 0 || y < 0 || x > vp.w || y > vp.h) {
-        throw new Error(
-          `Element is outside viewport for click: "${selector}" (x=${x}, y=${y}, viewport=${vp.w}x${vp.h})`,
+      // viewport 外の場合: scrollIntoView して座標を再計算
+      if (x < 0 || y < 0 || x > rect.vw || y > rect.vh) {
+        await session.send("Runtime.evaluate", {
+          expression: `document.querySelector('${escaped}')?.scrollIntoView({ block: 'center', inline: 'center' })`,
+          returnByValue: true,
+        });
+        const r2 = await session.send<{ result: { value: string | null } }>(
+          "Runtime.evaluate",
+          {
+            expression: `(function(){
+      const el = document.querySelector('${escaped}');
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return JSON.stringify({ left: r.left, top: r.top, w: r.width, h: r.height, vw: window.innerWidth, vh: window.innerHeight });
+    })()`,
+            returnByValue: true,
+          },
         );
+        if (!r2.result.value) throw new Error(`Element not found after scroll: "${selector}"`);
+        const rect2 = JSON.parse(r2.result.value) as {
+          left: number;
+          top: number;
+          w: number;
+          h: number;
+          vw: number;
+          vh: number;
+        };
+        x = Math.round(rect2.left + rect2.w / 2);
+        y = Math.round(rect2.top + rect2.h / 2);
+        // スクロール後もまだ viewport 外なら諦める
+        if (x < 0 || y < 0 || x > rect2.vw || y > rect2.vh) {
+          throw new Error(
+            `Element still outside viewport after scroll: "${selector}" (${x},${y})`,
+          );
+        }
       }
 
       // Step 2: Send CDP mouse events (mousePressed + mouseReleased)

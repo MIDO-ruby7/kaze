@@ -6,10 +6,10 @@
  * - AC-2: click coordinates come from getBoundingClientRect() element center
  * - B-1: querySelector null returns null (not a crash) and throws a clear error
  * - B-2: odd-width elements produce Math.round coordinates
- * - B-3: element outside right/bottom edge of viewport throws with viewport info
+ * - B-3: element outside viewport triggers scrollIntoView then clicks
  * - Non-click events still use the legacy JS dispatchEvent path
  * - Error is thrown when element is not visible (zero-size bounding box)
- * - Error is thrown when element is out of viewport
+ * - Error is thrown when element is still outside viewport after scroll
  */
 
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
@@ -38,19 +38,15 @@ describe("AC-1, AC-2: CdpAdapter.dispatchEvent — CDP click path", () => {
 
   it("AC-1: click sends mousePressed then mouseReleased via Input.dispatchMouseEvent", async () => {
     const sendMock = vi.fn();
-    // First call: Runtime.evaluate to get bounding rect
+    // First call: combined Runtime.evaluate (rect + viewport)
     sendMock.mockResolvedValueOnce({
       result: {
-        value: JSON.stringify({ left: 100, top: 200, width: 80, height: 40 }),
+        value: JSON.stringify({ left: 100, top: 200, w: 80, h: 40, vw: 1280, vh: 720 }),
       },
     });
-    // Second call: Runtime.evaluate for viewport size
-    sendMock.mockResolvedValueOnce({
-      result: { value: JSON.stringify({ w: 1280, h: 720 }) },
-    });
-    // Third call: Input.dispatchMouseEvent mousePressed
+    // Second call: Input.dispatchMouseEvent mousePressed
     sendMock.mockResolvedValueOnce({});
-    // Fourth call: Input.dispatchMouseEvent mouseReleased
+    // Third call: Input.dispatchMouseEvent mouseReleased
     sendMock.mockResolvedValueOnce({});
 
     adapter.targetSessions.set(contextId, makeFakeSession(sendMock));
@@ -86,15 +82,11 @@ describe("AC-1, AC-2: CdpAdapter.dispatchEvent — CDP click path", () => {
 
   it("AC-2: click coordinates are the element center from getBoundingClientRect", async () => {
     const sendMock = vi.fn();
-    // left=100, top=200, width=80, height=40 → center: x=140, y=220
+    // left=100, top=200, w=80, h=40 → center: x=140, y=220
     sendMock.mockResolvedValueOnce({
       result: {
-        value: JSON.stringify({ left: 100, top: 200, width: 80, height: 40 }),
+        value: JSON.stringify({ left: 100, top: 200, w: 80, h: 40, vw: 1280, vh: 720 }),
       },
-    });
-    // viewport size
-    sendMock.mockResolvedValueOnce({
-      result: { value: JSON.stringify({ w: 1280, h: 720 }) },
     });
     sendMock.mockResolvedValueOnce({});
     sendMock.mockResolvedValueOnce({});
@@ -132,7 +124,7 @@ describe("AC-1, AC-2: CdpAdapter.dispatchEvent — CDP click path", () => {
     const sendMock = vi.fn();
     sendMock.mockResolvedValueOnce({
       result: {
-        value: JSON.stringify({ left: 0, top: 0, width: 0, height: 0 }),
+        value: JSON.stringify({ left: 0, top: 0, w: 0, h: 0, vw: 1280, vh: 720 }),
       },
     });
 
@@ -140,26 +132,6 @@ describe("AC-1, AC-2: CdpAdapter.dispatchEvent — CDP click path", () => {
 
     await expect(adapter.dispatchEvent(contextId, "#hidden", "click")).rejects.toThrow(
       /not visible|zero.size|hidden/i,
-    );
-  });
-
-  it("throws when element center is outside viewport (negative coordinates)", async () => {
-    const sendMock = vi.fn();
-    // Element far off-screen to the left
-    sendMock.mockResolvedValueOnce({
-      result: {
-        value: JSON.stringify({ left: -500, top: -500, width: 10, height: 10 }),
-      },
-    });
-    // viewport size
-    sendMock.mockResolvedValueOnce({
-      result: { value: JSON.stringify({ w: 1280, h: 720 }) },
-    });
-
-    adapter.targetSessions.set(contextId, makeFakeSession(sendMock));
-
-    await expect(adapter.dispatchEvent(contextId, "#offscreen", "click")).rejects.toThrow(
-      /viewport|out.of.bounds|outside/i,
     );
   });
 
@@ -179,15 +151,11 @@ describe("AC-1, AC-2: CdpAdapter.dispatchEvent — CDP click path", () => {
 
   it("B-2: odd-width element produces Math.round coordinates", async () => {
     const sendMock = vi.fn();
-    // left=10, top=10, width=81, height=40 → raw center: x=50.5, y=30 → rounded: x=51, y=30
+    // left=10, top=10, w=81, h=40 → raw center: x=50.5, y=30 → rounded: x=51, y=30
     sendMock.mockResolvedValueOnce({
       result: {
-        value: JSON.stringify({ left: 10, top: 10, width: 81, height: 40 }),
+        value: JSON.stringify({ left: 10, top: 10, w: 81, h: 40, vw: 1280, vh: 720 }),
       },
-    });
-    // viewport size
-    sendMock.mockResolvedValueOnce({
-      result: { value: JSON.stringify({ w: 1280, h: 720 }) },
     });
     sendMock.mockResolvedValueOnce({});
     sendMock.mockResolvedValueOnce({});
@@ -203,23 +171,68 @@ describe("AC-1, AC-2: CdpAdapter.dispatchEvent — CDP click path", () => {
     expect(pressedCall![1]).toMatchObject({ x: 51, y: 30 });
   });
 
-  it("B-3: throws when element center is beyond right/bottom viewport edge", async () => {
+  it("B-3: viewport 外要素は scrollIntoView 後にクリックされる", async () => {
     const sendMock = vi.fn();
-    // Element positioned at right edge: center x = 1280 + 10 = 1290 (outside 1280 viewport)
+    // 初回 combined evaluate: 要素が viewport 外 (x=-495 < 0)
     sendMock.mockResolvedValueOnce({
       result: {
-        value: JSON.stringify({ left: 1280, top: 10, width: 20, height: 20 }),
+        value: JSON.stringify({ left: -500, top: 100, w: 10, h: 10, vw: 1280, vh: 720 }),
       },
     });
-    // viewport size
+    // scrollIntoView の Runtime.evaluate
+    sendMock.mockResolvedValueOnce({ result: { value: null } });
+    // スクロール後の combined evaluate: 要素が viewport 内
     sendMock.mockResolvedValueOnce({
-      result: { value: JSON.stringify({ w: 1280, h: 720 }) },
+      result: {
+        value: JSON.stringify({ left: 100, top: 200, w: 10, h: 10, vw: 1280, vh: 720 }),
+      },
+    });
+    // Input.dispatchMouseEvent mousePressed
+    sendMock.mockResolvedValueOnce({});
+    // Input.dispatchMouseEvent mouseReleased
+    sendMock.mockResolvedValueOnce({});
+
+    adapter.targetSessions.set(contextId, makeFakeSession(sendMock));
+
+    await adapter.dispatchEvent(contextId, "#offscreen", "click");
+
+    // scrollIntoView が呼ばれたことを確認
+    const scrollCall = sendMock.mock.calls.find(
+      (c: unknown[]) =>
+        c[0] === "Runtime.evaluate" &&
+        typeof (c[1] as { expression: string }).expression === "string" &&
+        (c[1] as { expression: string }).expression.includes("scrollIntoView"),
+    );
+    expect(scrollCall).toBeDefined();
+
+    // スクロール後の座標でクリックされることを確認: x=105, y=205
+    const pressedCall = sendMock.mock.calls.find(
+      (c: unknown[]) => c[0] === "Input.dispatchMouseEvent" && (c[1] as { type: string }).type === "mousePressed",
+    );
+    expect(pressedCall![1]).toMatchObject({ x: 105, y: 205 });
+  });
+
+  it("throws when element is still outside viewport after scrollIntoView", async () => {
+    const sendMock = vi.fn();
+    // 初回 combined evaluate: 要素が viewport 外
+    sendMock.mockResolvedValueOnce({
+      result: {
+        value: JSON.stringify({ left: -500, top: -500, w: 10, h: 10, vw: 1280, vh: 720 }),
+      },
+    });
+    // scrollIntoView の Runtime.evaluate
+    sendMock.mockResolvedValueOnce({ result: { value: null } });
+    // スクロール後の combined evaluate: まだ viewport 外
+    sendMock.mockResolvedValueOnce({
+      result: {
+        value: JSON.stringify({ left: -500, top: -500, w: 10, h: 10, vw: 1280, vh: 720 }),
+      },
     });
 
     adapter.targetSessions.set(contextId, makeFakeSession(sendMock));
 
-    await expect(adapter.dispatchEvent(contextId, "#right-edge", "click")).rejects.toThrow(
-      /outside viewport.*viewport=1280x720/i,
+    await expect(adapter.dispatchEvent(contextId, "#stuck", "click")).rejects.toThrow(
+      /still outside viewport after scroll/i,
     );
   });
 });
