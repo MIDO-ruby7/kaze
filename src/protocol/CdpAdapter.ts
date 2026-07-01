@@ -855,13 +855,24 @@ export class CdpAdapter implements ProtocolAdapter {
       // This ensures React/Vue synthetic event handlers fire, unlike JS dispatchEvent.
 
       // Step 1: Get element bounding rect via Runtime.evaluate
-      const rectResult = await session.send<{ result: { value: string } }>(
+      // B-1: null check is inside the evaluate expression to avoid opaque crashes
+      const rectResult = await session.send<{ result: { value: string | null } }>(
         "Runtime.evaluate",
         {
-          expression: `JSON.stringify(document.querySelector('${escaped}').getBoundingClientRect())`,
+          expression: `(function() {
+      const el = document.querySelector('${escaped}');
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return JSON.stringify({ left: r.left, top: r.top, width: r.width, height: r.height });
+    })()`,
           returnByValue: true,
         },
       );
+
+      // B-1: element not found
+      if (!rectResult.result.value) {
+        throw new Error(`Element not found for click: "${selector}"`);
+      }
 
       const rect = JSON.parse(rectResult.result.value) as {
         left: number;
@@ -878,14 +889,21 @@ export class CdpAdapter implements ProtocolAdapter {
         );
       }
 
-      const x = rect.left + rect.width / 2;
-      const y = rect.top + rect.height / 2;
+      // B-2: round to integer coordinates to avoid sub-pixel CDP errors
+      const x = Math.round(rect.left + rect.width / 2);
+      const y = Math.round(rect.top + rect.height / 2);
+
+      // B-3: get viewport size and check upper bounds
+      const vpResult = await session.send<{ result: { value: string } }>(
+        "Runtime.evaluate",
+        { expression: `JSON.stringify({ w: window.innerWidth, h: window.innerHeight })`, returnByValue: true },
+      );
+      const vp = JSON.parse(vpResult.result.value) as { w: number; h: number };
 
       // Error handling: element center outside viewport
-      if (x < 0 || y < 0) {
+      if (x < 0 || y < 0 || x > vp.w || y > vp.h) {
         throw new Error(
-          `Element center (${x}, ${y}) is outside the viewport for selector: ${selector}. ` +
-          `Scroll the element into view before clicking.`,
+          `Element is outside viewport for click: "${selector}" (x=${x}, y=${y}, viewport=${vp.w}x${vp.h})`,
         );
       }
 

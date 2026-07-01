@@ -4,6 +4,9 @@
  * Verifies that:
  * - AC-1: click uses Input.dispatchMouseEvent (mousePressed + mouseReleased)
  * - AC-2: click coordinates come from getBoundingClientRect() element center
+ * - B-1: querySelector null returns null (not a crash) and throws a clear error
+ * - B-2: odd-width elements produce Math.round coordinates
+ * - B-3: element outside right/bottom edge of viewport throws with viewport info
  * - Non-click events still use the legacy JS dispatchEvent path
  * - Error is thrown when element is not visible (zero-size bounding box)
  * - Error is thrown when element is out of viewport
@@ -41,9 +44,13 @@ describe("AC-1, AC-2: CdpAdapter.dispatchEvent — CDP click path", () => {
         value: JSON.stringify({ left: 100, top: 200, width: 80, height: 40 }),
       },
     });
-    // Second call: Input.dispatchMouseEvent mousePressed
+    // Second call: Runtime.evaluate for viewport size
+    sendMock.mockResolvedValueOnce({
+      result: { value: JSON.stringify({ w: 1280, h: 720 }) },
+    });
+    // Third call: Input.dispatchMouseEvent mousePressed
     sendMock.mockResolvedValueOnce({});
-    // Third call: Input.dispatchMouseEvent mouseReleased
+    // Fourth call: Input.dispatchMouseEvent mouseReleased
     sendMock.mockResolvedValueOnce({});
 
     adapter.targetSessions.set(contextId, makeFakeSession(sendMock));
@@ -84,6 +91,10 @@ describe("AC-1, AC-2: CdpAdapter.dispatchEvent — CDP click path", () => {
       result: {
         value: JSON.stringify({ left: 100, top: 200, width: 80, height: 40 }),
       },
+    });
+    // viewport size
+    sendMock.mockResolvedValueOnce({
+      result: { value: JSON.stringify({ w: 1280, h: 720 }) },
     });
     sendMock.mockResolvedValueOnce({});
     sendMock.mockResolvedValueOnce({});
@@ -140,11 +151,75 @@ describe("AC-1, AC-2: CdpAdapter.dispatchEvent — CDP click path", () => {
         value: JSON.stringify({ left: -500, top: -500, width: 10, height: 10 }),
       },
     });
+    // viewport size
+    sendMock.mockResolvedValueOnce({
+      result: { value: JSON.stringify({ w: 1280, h: 720 }) },
+    });
 
     adapter.targetSessions.set(contextId, makeFakeSession(sendMock));
 
     await expect(adapter.dispatchEvent(contextId, "#offscreen", "click")).rejects.toThrow(
       /viewport|out.of.bounds|outside/i,
+    );
+  });
+
+  it("B-1: throws a clear error when querySelector returns null", async () => {
+    const sendMock = vi.fn();
+    // B-1: evaluate returns null (element not found)
+    sendMock.mockResolvedValueOnce({
+      result: { value: null },
+    });
+
+    adapter.targetSessions.set(contextId, makeFakeSession(sendMock));
+
+    await expect(adapter.dispatchEvent(contextId, "#missing", "click")).rejects.toThrow(
+      /Element not found for click/,
+    );
+  });
+
+  it("B-2: odd-width element produces Math.round coordinates", async () => {
+    const sendMock = vi.fn();
+    // left=10, top=10, width=81, height=40 → raw center: x=50.5, y=30 → rounded: x=51, y=30
+    sendMock.mockResolvedValueOnce({
+      result: {
+        value: JSON.stringify({ left: 10, top: 10, width: 81, height: 40 }),
+      },
+    });
+    // viewport size
+    sendMock.mockResolvedValueOnce({
+      result: { value: JSON.stringify({ w: 1280, h: 720 }) },
+    });
+    sendMock.mockResolvedValueOnce({});
+    sendMock.mockResolvedValueOnce({});
+
+    adapter.targetSessions.set(contextId, makeFakeSession(sendMock));
+
+    await adapter.dispatchEvent(contextId, "#odd", "click");
+
+    const pressedCall = sendMock.mock.calls.find(
+      (c: unknown[]) => c[0] === "Input.dispatchMouseEvent" && (c[1] as { type: string }).type === "mousePressed",
+    );
+    // x = Math.round(10 + 81/2) = Math.round(50.5) = 51
+    expect(pressedCall![1]).toMatchObject({ x: 51, y: 30 });
+  });
+
+  it("B-3: throws when element center is beyond right/bottom viewport edge", async () => {
+    const sendMock = vi.fn();
+    // Element positioned at right edge: center x = 1280 + 10 = 1290 (outside 1280 viewport)
+    sendMock.mockResolvedValueOnce({
+      result: {
+        value: JSON.stringify({ left: 1280, top: 10, width: 20, height: 20 }),
+      },
+    });
+    // viewport size
+    sendMock.mockResolvedValueOnce({
+      result: { value: JSON.stringify({ w: 1280, h: 720 }) },
+    });
+
+    adapter.targetSessions.set(contextId, makeFakeSession(sendMock));
+
+    await expect(adapter.dispatchEvent(contextId, "#right-edge", "click")).rejects.toThrow(
+      /outside viewport.*viewport=1280x720/i,
     );
   });
 });
