@@ -35,7 +35,7 @@ export interface HoverOptions {
 
 export class Locator {
   constructor(
-    private readonly page: Page,
+    protected readonly page: Page,
     readonly selector: string,
   ) {}
 
@@ -90,6 +90,31 @@ export class Locator {
     return Array.from({ length: n }, (_, i) =>
       new Locator(this.page, `[data-kaze-idx="${i}"]`),
     );
+  }
+
+  /**
+   * Returns a Locator for the first matching element.
+   * Playwright-compatible: locator.first()
+   * Uses a unique marker attribute assigned at action time.
+   */
+  first(): NthLocator {
+    return new NthLocator(this.page, this.selector, 0);
+  }
+
+  /**
+   * Returns a Locator for the last matching element.
+   * Playwright-compatible: locator.last()
+   */
+  last(): NthLocator {
+    return new NthLocator(this.page, this.selector, -1);
+  }
+
+  /**
+   * Returns a Locator for the nth matching element (0-indexed).
+   * Playwright-compatible: locator.nth(n)
+   */
+  nth(index: number): NthLocator {
+    return new NthLocator(this.page, this.selector, index);
   }
 
   /**
@@ -302,5 +327,78 @@ export class Locator {
    */
   getPage(): Page {
     return this.page;
+  }
+}
+
+/**
+ * NthLocator — a Locator that targets the nth element matching a selector.
+ * Before each action, it evaluates querySelectorAll(selector)[index] in the
+ * browser and assigns a unique `data-kaze-nth` attribute so the base Locator
+ * methods can target it via a precise attribute selector.
+ *
+ * index = 0  → first(), index = -1 → last()
+ */
+export class NthLocator extends Locator {
+  private readonly _parentSelector: string;
+  private readonly _index: number;
+
+  constructor(page: Page, parentSelector: string, index: number) {
+    // Temporary selector — replaced at action time via _resolveNth()
+    super(page, parentSelector);
+    this._parentSelector = parentSelector;
+    this._index = index;
+  }
+
+  /** Tag the nth element and return the attribute selector for it. */
+  private async _resolveNth(): Promise<string> {
+    const esc = escapeSelector(this._parentSelector);
+    const idx = this._index;
+    const tag = `data-kaze-nth-${Date.now()}`;
+    await (this.page as any)._evaluate(
+      `(function(){
+        const els = document.querySelectorAll('${esc}');
+        const el = ${idx} >= 0 ? els[${idx}] : els[els.length + ${idx}];
+        if (el) el.setAttribute('${tag}', '1');
+      })()`,
+    );
+    return `[${tag}]`;
+  }
+
+  private async _withResolved<T>(fn: (loc: Locator) => Promise<T>): Promise<T> {
+    const sel = await this._resolveNth();
+    return fn(new Locator(this.page as Page, sel));
+  }
+
+  async click(opts?: Parameters<Locator["click"]>[0]): Promise<void> {
+    return this._withResolved(l => l.click(opts));
+  }
+  async fill(value: string, opts?: Parameters<Locator["fill"]>[1]): Promise<void> {
+    return this._withResolved(l => l.fill(value, opts));
+  }
+  async textContent(opts?: Parameters<Locator["textContent"]>[0]): Promise<string | null> {
+    return this._withResolved(l => l.textContent(opts));
+  }
+  async innerText(opts?: Parameters<Locator["innerText"]>[0]): Promise<string> {
+    return this._withResolved(l => l.innerText(opts));
+  }
+  async getAttribute(name: string, opts?: Parameters<Locator["getAttribute"]>[1]): Promise<string | null> {
+    return this._withResolved(l => l.getAttribute(name, opts));
+  }
+  async inputValue(opts?: Parameters<Locator["inputValue"]>[0]): Promise<string> {
+    return this._withResolved(l => l.inputValue(opts));
+  }
+  async isVisible(): Promise<boolean> {
+    return this._withResolved(l => l.isVisible());
+  }
+  async isEnabled(): Promise<boolean> {
+    return this._withResolved(l => l.isEnabled());
+  }
+  async hover(opts?: Parameters<Locator["hover"]>[0]): Promise<void> {
+    return this._withResolved(l => l.hover(opts));
+  }
+  async count(): Promise<number> {
+    // nth locator always refers to 0 or 1 element
+    const sel = await this._resolveNth();
+    return new Locator(this.page as Page, sel).count();
   }
 }
