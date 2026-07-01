@@ -434,12 +434,15 @@ export class NthLocator extends Locator {
 
   /** Tag the nth element and return the attribute selector for it. */
   private async _resolveNth(): Promise<string> {
-    const esc = escapeSelector(this._parentSelector);
+    // AC-4: use the raw selector without escapeSelector so comma-separated
+    // selectors are passed directly to querySelectorAll without modification.
+    const rawSel = this._parentSelector.replace(/'/g, "\\'");
     const idx = this._index;
-    const tag = `data-kaze-nth-${Date.now()}`;
+    // AC-3: append a random suffix to guarantee uniqueness across concurrent calls.
+    const tag = `data-kaze-nth-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
     await (this.page as any)._evaluate(
       `(function(){
-        const els = document.querySelectorAll('${esc}');
+        const els = document.querySelectorAll('${rawSel}');
         const el = ${idx} >= 0 ? els[${idx}] : els[els.length + ${idx}];
         if (el) el.setAttribute('${tag}', '1');
       })()`,
