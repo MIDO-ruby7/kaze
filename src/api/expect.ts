@@ -292,9 +292,10 @@ class LocatorExpect implements LocatorMatchers {
         );
         lastActual = result !== null && result !== undefined ? String(result) : null;
         if (lastActual !== null) {
+          const classes = lastActual.split(/\s+/).filter(Boolean);
           const matched =
             typeof expected === "string"
-              ? lastActual.includes(expected)
+              ? classes.includes(expected)
               : expected.test(lastActual);
           if (matched) return;
         }
