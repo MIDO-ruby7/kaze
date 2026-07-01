@@ -53,6 +53,11 @@ test('my test', async (page) => { ... });
 | `page.textContent(selector)` | Supported | auto-waiting; default timeout 30000ms; accepts `{ timeout }` option |
 | `page.waitForSelector(selector, opts?)` | Supported | polls every 100ms; default timeout 30000ms; accepts `{ timeout }` option |
 | `page.locator(selector)` | Supported | Returns `Locator` |
+| `page.getByText(text, opts?)` | Supported | Partial match by default; `{ exact: true }` for exact match; evaluate-based DOM scan |
+| `page.getByLabel(text, opts?)` | Supported | Finds input/select/textarea via `for`/id association or nesting; partial match by default |
+| `page.getByPlaceholder(text, opts?)` | Supported | Partial match by default (`placeholder` attribute); `{ exact: true }` for exact match |
+| `page.getByTestId(id)` | Supported | Returns `Locator` for `[data-testid="id"]` |
+| `page.getByRole(role, opts?)` | Supported | Supports all WAI-ARIA 1.2 roles (70+); implicit HTML roles mapped to native selectors (e.g. `button` → `button, [role="button"], input[type="button"], ...`); `{ name }` option filters by aria-label / aria-labelledby / textContent (string or RegExp); `{ exact }` controls exact vs partial match (default: partial) |
 | `page.url()` | Supported | |
 | `page.title()` | Supported | Returns `document.title` |
 | `page.close()` | Supported | |
@@ -84,8 +89,8 @@ test('my test', async (page) => { ... });
 | `locator.isVisible()` | Supported | Immediate (no auto-waiting); checks computed style |
 | `locator.isEnabled()` | Supported | Immediate (no auto-waiting); checks `el.disabled` |
 | `locator.inputValue()` | Supported | auto-waiting; returns `el.value` of input/textarea |
-| `locator.nth(index)` | Not supported | — |
-| `locator.first()` / `locator.last()` | Not supported | — |
+| `locator.nth(index)` | Supported | Returns `NthLocator`; 0-indexed; works with comma selectors |
+| `locator.first()` / `locator.last()` | Supported | Returns `NthLocator`; works with comma selectors |
 | `locator.filter()` | Not supported | — |
 | `locator.waitFor()` | Not supported | Use `page.waitForSelector()` |
 | `locator.getAttribute(name, opts?)` | Supported | auto-waiting; returns `null` when attribute absent; default timeout 30000ms |
@@ -104,8 +109,10 @@ test('my test', async (page) => { ... });
 | `expect(locator).toHaveCount(n)` | Supported | Auto-retry up to 5s |
 | `expect(page).toHaveURL(url)` | Supported | Accepts string or RegExp |
 | `expect(page).toHaveTitle(title)` | Supported | Auto-retry up to 5s; accepts string or RegExp |
+| `expect(locator).toHaveClass(class)` | Supported | Auto-retry up to 5s; word-boundary match (space-separated classList) |
+| `expect(locator).toHaveAttribute(name, value)` | Supported | Auto-retry up to 5s; accepts string (exact) or RegExp |
+| `expect(locator).toContainText(text)` | Supported | Auto-retry up to 5s; accepts string (substring) or RegExp |
 | `expect(locator).toBeHidden()` | Not supported | — |
-| `expect(locator).toHaveAttribute()` | Not supported | — |
 | Soft assertions (`expect.soft`) | Not supported | — |
 
 ### CLI フィルタ
@@ -121,5 +128,4 @@ test('my test', async (page) => { ... });
 
 - `test.beforeEach` / `test.afterEach`
 - `expect(locator).toBeHidden()`
-- `expect(locator).toHaveAttribute()`
 - BiDi protocol support

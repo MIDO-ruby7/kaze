@@ -848,6 +848,84 @@ export class CdpAdapter implements ProtocolAdapter {
 
   async dispatchEvent(contextId: ContextId, selector: string, event: string): Promise<void> {
     const escaped = selector.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+    const session = this.getSession(contextId);
+
+    if (event === "click") {
+      // AC-1, AC-2: Use CDP Input.dispatchMouseEvent with element-center coordinates.
+      // This ensures React/Vue synthetic event handlers fire, unlike JS dispatchEvent.
+
+      // Step 1: Get element bounding rect via Runtime.evaluate
+      // B-1: null check is inside the evaluate expression to avoid opaque crashes
+      const rectResult = await session.send<{ result: { value: string | null } }>(
+        "Runtime.evaluate",
+        {
+          expression: `(function() {
+      const el = document.querySelector('${escaped}');
+      if (!el) return null;
+      const r = el.getBoundingClientRect();
+      return JSON.stringify({ left: r.left, top: r.top, width: r.width, height: r.height });
+    })()`,
+          returnByValue: true,
+        },
+      );
+
+      // B-1: element not found
+      if (!rectResult.result.value) {
+        throw new Error(`Element not found for click: "${selector}"`);
+      }
+
+      const rect = JSON.parse(rectResult.result.value) as {
+        left: number;
+        top: number;
+        width: number;
+        height: number;
+      };
+
+      // Error handling: element not visible (zero-size bounding box)
+      if (rect.width === 0 && rect.height === 0) {
+        throw new Error(
+          `Element not visible (zero-size bounding box): ${selector}. ` +
+          `The element may be hidden (display:none, visibility:hidden, or off-screen).`,
+        );
+      }
+
+      // B-2: round to integer coordinates to avoid sub-pixel CDP errors
+      const x = Math.round(rect.left + rect.width / 2);
+      const y = Math.round(rect.top + rect.height / 2);
+
+      // B-3: get viewport size and check upper bounds
+      const vpResult = await session.send<{ result: { value: string } }>(
+        "Runtime.evaluate",
+        { expression: `JSON.stringify({ w: window.innerWidth, h: window.innerHeight })`, returnByValue: true },
+      );
+      const vp = JSON.parse(vpResult.result.value) as { w: number; h: number };
+
+      // Error handling: element center outside viewport
+      if (x < 0 || y < 0 || x > vp.w || y > vp.h) {
+        throw new Error(
+          `Element is outside viewport for click: "${selector}" (x=${x}, y=${y}, viewport=${vp.w}x${vp.h})`,
+        );
+      }
+
+      // Step 2: Send CDP mouse events (mousePressed + mouseReleased)
+      await session.send("Input.dispatchMouseEvent", {
+        type: "mousePressed",
+        x,
+        y,
+        button: "left",
+        clickCount: 1,
+      });
+      await session.send("Input.dispatchMouseEvent", {
+        type: "mouseReleased",
+        x,
+        y,
+        button: "left",
+        clickCount: 1,
+      });
+      return;
+    }
+
+    // Non-click events: fall back to JS dispatchEvent (hover, focus, etc.)
     const escapedEvent = event.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
     const expression = `
       (function() {

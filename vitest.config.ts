@@ -1,6 +1,10 @@
 import { defineConfig } from "vitest/config";
 
 export default defineConfig({
+  css: {
+    // Disable PostCSS processing to avoid picking up unrelated global postcss.config.js
+    postcss: {},
+  },
   test: {
     globals: true,
     environment: "node",

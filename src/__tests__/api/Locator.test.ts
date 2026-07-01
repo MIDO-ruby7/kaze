@@ -429,4 +429,73 @@ describe("Locator", () => {
       expect(value).toBe("");
     });
   });
+
+  // -------------------------------------------------------------------------
+  // Issue #46: comma-selector + first() / nth()
+  // -------------------------------------------------------------------------
+  describe("NthLocator with comma selector (Issue #46)", () => {
+    it("first() uses a unique tag with timestamp+random suffix (AC-3)", async () => {
+      const commaLocator = page.locator("h1, h2");
+      // _resolveNth calls evaluate once (to tag the element), then textContent
+      // calls waitForSelector (evaluate once) and innerText evaluate.
+      // For this test we just check the attribute name format.
+      (adapter.evaluate as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce(undefined)  // _resolveNth setAttribute
+        .mockResolvedValueOnce(true)       // waitForSelector inside textContent
+        .mockResolvedValueOnce("heading"); // textContent result
+      const first = commaLocator.first();
+      const text = await first.textContent();
+      expect(text).toBe("heading");
+      // The _resolveNth evaluate call must include a tag matching data-kaze-nth-<digits>-<alphanum>
+      const calls = (adapter.evaluate as ReturnType<typeof vi.fn>).mock.calls;
+      const resolveScript = calls[0][1] as string;
+      expect(resolveScript).toMatch(/data-kaze-nth-\d+-[a-z0-9]+/);
+    });
+
+    it("_resolveNth does NOT escape the comma in the parent selector (AC-4)", async () => {
+      const commaLocator = page.locator("h1, h2");
+      (adapter.evaluate as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce(undefined);
+      // Call internal resolve by triggering textContent (which calls _withResolved)
+      // We inspect the evaluate call and make sure the raw selector passes through.
+      (adapter.evaluate as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce(undefined)
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce("h1 text");
+      const text = await commaLocator.first().textContent();
+      expect(text).toBe("h1 text");
+      const calls = (adapter.evaluate as ReturnType<typeof vi.fn>).mock.calls;
+      const resolveScript = calls[0][1] as string;
+      // Comma must be present (not escaped as \,)
+      expect(resolveScript).toContain("h1, h2");
+      expect(resolveScript).not.toContain("h1\\,");
+    });
+
+    it("nth(1) tags the second element (AC-2)", async () => {
+      const commaLocator = page.locator("h1, h2");
+      (adapter.evaluate as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce(undefined)  // _resolveNth
+        .mockResolvedValueOnce(true)       // waitForSelector
+        .mockResolvedValueOnce("second");  // textContent
+      const text = await commaLocator.nth(1).textContent();
+      expect(text).toBe("second");
+      const calls = (adapter.evaluate as ReturnType<typeof vi.fn>).mock.calls;
+      const resolveScript = calls[0][1] as string;
+      // Must use index 1
+      expect(resolveScript).toContain("els[1]");
+    });
+
+    it("first() tags the first element with index 0 (AC-1)", async () => {
+      const commaLocator = page.locator("h1, h2");
+      (adapter.evaluate as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce(undefined)
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce("first heading");
+      const text = await commaLocator.first().textContent();
+      expect(text).toBe("first heading");
+      const calls = (adapter.evaluate as ReturnType<typeof vi.fn>).mock.calls;
+      const resolveScript = calls[0][1] as string;
+      expect(resolveScript).toContain("els[0]");
+    });
+  });
 });

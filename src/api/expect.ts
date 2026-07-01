@@ -26,6 +26,9 @@ export interface LocatorMatchers {
   toBeDisabled(opts?: { timeout?: number }): Promise<void>;
   toHaveValue(expected: string, opts?: { timeout?: number }): Promise<void>;
   toHaveCount(expected: number, opts?: { timeout?: number }): Promise<void>;
+  toHaveClass(expected: string | RegExp, opts?: { timeout?: number }): Promise<void>;
+  toHaveAttribute(name: string, value: string | RegExp, opts?: { timeout?: number }): Promise<void>;
+  toContainText(expected: string | RegExp, opts?: { timeout?: number }): Promise<void>;
 }
 
 export interface PageMatchers {
@@ -263,6 +266,137 @@ class LocatorExpect implements LocatorMatchers {
         `  Selector: ${this.locator.selector}\n` +
         `  Expected count: ${expected}\n` +
         `  Received:       ${lastActual}\n` +
+        `  Timeout: ${timeout}ms`,
+    );
+  }
+
+  /**
+   * Assert that the element has the expected class (partial string match or RegExp).
+   * Auto-retries. AC-1 (Issue #45)
+   */
+  async toHaveClass(
+    expected: string | RegExp,
+    opts?: { timeout?: number },
+  ): Promise<void> {
+    const timeout = opts?.timeout ?? DEFAULT_TIMEOUT_MS;
+    const deadline = Date.now() + timeout;
+    let lastActual: string | null = null;
+
+    while (Date.now() < deadline) {
+      try {
+        const result = await this.locator._evaluate(
+          `(function() {
+            const el = document.querySelector('${escapeSelector(this.locator.selector)}');
+            return el ? el.className : null;
+          })()`,
+        );
+        lastActual = result !== null && result !== undefined ? String(result) : null;
+        if (lastActual !== null) {
+          const classes = lastActual.split(/\s+/).filter(Boolean);
+          const matched =
+            typeof expected === "string"
+              ? classes.includes(expected)
+              : expected.test(lastActual);
+          if (matched) return;
+        }
+      } catch {
+        // keep retrying
+      }
+      await delay(POLL_INTERVAL_MS);
+    }
+
+    throw new AssertionError(
+      `expect(locator).toHaveClass(${String(expected)})\n` +
+        `  Selector: ${this.locator.selector}\n` +
+        `  Expected class to match: ${String(expected)}\n` +
+        `  Received:                ${JSON.stringify(lastActual)}\n` +
+        `  Timeout: ${timeout}ms`,
+    );
+  }
+
+  /**
+   * Assert that the element has an attribute with the expected value.
+   * Auto-retries. AC-2 (Issue #45)
+   */
+  async toHaveAttribute(
+    name: string,
+    value: string | RegExp,
+    opts?: { timeout?: number },
+  ): Promise<void> {
+    const timeout = opts?.timeout ?? DEFAULT_TIMEOUT_MS;
+    const deadline = Date.now() + timeout;
+    let lastActual: string | null = null;
+    const escapedName = name.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+
+    while (Date.now() < deadline) {
+      try {
+        const result = await this.locator._evaluate(
+          `(function() {
+            const el = document.querySelector('${escapeSelector(this.locator.selector)}');
+            if (!el) return null;
+            const val = el.getAttribute('${escapedName}');
+            return val === undefined ? null : val;
+          })()`,
+        );
+        lastActual = result !== null && result !== undefined ? String(result) : null;
+        if (lastActual !== null) {
+          const matched =
+            typeof value === "string"
+              ? lastActual === value
+              : value.test(lastActual);
+          if (matched) return;
+        }
+      } catch {
+        // keep retrying
+      }
+      await delay(POLL_INTERVAL_MS);
+    }
+
+    throw new AssertionError(
+      `expect(locator).toHaveAttribute(${JSON.stringify(name)}, ${String(value)})\n` +
+        `  Selector: ${this.locator.selector}\n` +
+        `  Expected attribute "${name}" to match: ${String(value)}\n` +
+        `  Received:                               ${JSON.stringify(lastActual)}\n` +
+        `  Timeout: ${timeout}ms`,
+    );
+  }
+
+  /**
+   * Assert that the element's text content contains the expected string/RegExp.
+   * Native implementation without shim — uses polling loop like toHaveText.
+   * AC-3 (Issue #45)
+   */
+  async toContainText(
+    expected: string | RegExp,
+    opts?: { timeout?: number },
+  ): Promise<void> {
+    const timeout = opts?.timeout ?? DEFAULT_TIMEOUT_MS;
+    const deadline = Date.now() + timeout;
+    let lastActual: string | null = null;
+
+    while (Date.now() < deadline) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) break;
+      try {
+        lastActual = await this.locator.textContent({ timeout: POLL_INTERVAL_MS });
+        if (lastActual !== null) {
+          const matched =
+            typeof expected === "string"
+              ? lastActual.includes(expected)
+              : expected.test(lastActual);
+          if (matched) return;
+        }
+      } catch {
+        // element may not exist yet — keep retrying
+      }
+      await delay(POLL_INTERVAL_MS);
+    }
+
+    throw new AssertionError(
+      `expect(locator).toContainText(${String(expected)})\n` +
+        `  Selector: ${this.locator.selector}\n` +
+        `  Expected text to contain: ${String(expected)}\n` +
+        `  Received:                 ${JSON.stringify(lastActual)}\n` +
         `  Timeout: ${timeout}ms`,
     );
   }
