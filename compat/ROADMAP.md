@@ -1,104 +1,81 @@
 # kaze Playwright Compatibility Roadmap
 
-> Last updated: 2026-07-01
-> Current compatibility: 54% (14/26 tests across 10 OSS)
-> Target: 80%+
+> Last updated: 2026-07-02
+> Best compatibility: 62% (16/26 tests across 10 OSS) — v5 測定中
 
 ---
 
-## Compatibility Test Results (10 OSS)
+## Compatibility History
 
-| OSS | Pass | Status | Notes |
-|-----|------|--------|-------|
-| automationintesting | 2/2 | ✅ Full pass | |
-| github-login | 2/2 | ✅ Full pass | |
-| runteq-studio | 3/4 | ⚠️ Partial | SPA redirect (app-side) |
-| playwright-dev | 2/3 | ⚠️ Partial | CSS selector edge case |
-| demoqa | 1/2 | ⚠️ Partial | Dynamic render wait |
-| jsonplaceholder | 1/2 | ⚠️ Partial | Relative URL fetch |
-| playwright-todomvc | 1/3 | ⚠️ Partial | Enter key + SPA state |
-| the-internet | 1/3 | ⚠️ Partial | Form submit CDP gap |
-| saucedemo | 1/3 | ⚠️ Partial | React SPA click |
-| wikipedia | 0/2 | ❌ Blocked | Comma-selector bug |
+| Version | Pass | Rate | Key Changes |
+|---------|------|------|-------------|
+| v1 | 9/26 | 35% | — |
+| v2 | 14/26 | 54% | `locator.first/last/nth` |
+| v3 | 16/26 | 62% | Epic #43: getBy*, CDP click, matcher拡張 |
+| v4 | 16/26 | 62% | scrollIntoView fallback, perf最適化 |
+| v5 | TBD | TBD | SPA nav wait, awaitPromise, localStorage clear |
 
 ---
 
-## Fix Priority
+## Implemented APIs (✅ Done)
 
-### 🔴 P0 — Quick wins (S/M, +10% expected)
+### Selectors
+- `page.locator(selector)` ✅
+- `page.getByText(text, { exact? })` ✅
+- `page.getByLabel(text)` ✅
+- `page.getByPlaceholder(text)` ✅
+- `page.getByTestId(id)` ✅
+- `page.getByRole(role, { name?, exact? })` ✅ (70+ ARIA roles)
+- `:text("...")` selector syntax ✅
+- Comma-separated selectors with `.first()/.nth()` ✅
 
-| ID | Feature | Impact | Effort |
-|----|---------|--------|--------|
-| A-2 | `page.getByText(text)` | High | S |
-| A-3 | `page.getByLabel(text)` | High | S |
-| A-4 | `page.getByPlaceholder(text)` | Medium | S |
-| A-5 | `page.getByTestId(id)` | Medium | S |
-| C-1 | `expect(locator).toHaveClass(/pattern/)` | High | S |
-| C-3 | `expect(locator).toHaveAttribute(name, value)` | Medium | S |
-| C-4 | `expect(locator).toContainText()` (native, no shim) | High | S |
-| B-2 | Fix comma-selector with `.first()` / `.nth()` | High | S |
+### Locator methods
+- `click/fill/hover/check/uncheck/selectOption` ✅
+- `textContent/innerText/getAttribute/inputValue` ✅
+- `isVisible/isEnabled` ✅
+- `count/all/first/last/nth` ✅
+- `waitFor({ state })` ✅
+- `filter({ hasText, hasNotText })` ✅
 
-### 🟡 P1 — Root cause fixes (M/L, +10% expected)
+### Page methods
+- `goto/click/fill/keyboard.press` ✅
+- `waitForURL/waitForLoadState` ✅
+- `evaluate()` with `awaitPromise: true` ✅
+- `route/unroute` ✅
+- `screenshot/title` ✅
+- `getByRole/getByText/getByLabel/getByPlaceholder/getByTestId` ✅
 
-| ID | Feature | Impact | Effort |
-|----|---------|--------|--------|
-| B-1 | CDP `Input.dispatchMouseEvent` for click | Very High | M |
-| A-1 | `page.getByRole(role, opts)` | Very High | M |
+### Assertions
+- `toHaveText/toBeVisible/toHaveURL/toHaveTitle` ✅
+- `toBeChecked/toBeEnabled/toBeDisabled` ✅
+- `toHaveClass/toHaveAttribute/toContainText` ✅
+- `toHaveValue/toHaveCount` ✅
+- `expect(locator).not.*` ✅
 
-### 🟢 P2 — Advanced (future)
-
-| ID | Feature | Impact | Effort |
-|----|---------|--------|--------|
-| D-1 | iframe / frame support | Medium | L |
-| D-2 | drag-and-drop | Low | L |
-| D-3 | `test.use({ storageState })` | Medium | M |
-| D-4 | Firefox / WebKit (WebDriver BiDi) | High | XL |
-
----
-
-## Root Cause Analysis
-
-### Why clicks don't work in SPAs (B-1)
-kaze uses `el.dispatchEvent(new MouseEvent('click', ...))` in JavaScript.
-Playwright uses CDP `Input.dispatchMouseEvent` which injects a real OS-level mouse event.
-React, Vue etc. often use synthetic event systems or delegate to the root, and JS dispatchEvent
-sometimes doesn't propagate correctly through framework boundaries.
-
-**Fix**: Add `Input.dispatchMouseEvent` + `Input.dispatchTouchEvent` to CdpAdapter.
-
-### Why comma-selectors break with first()/nth() (B-2)
-Our `NthLocator._resolveNth()` tags elements with `data-kaze-nth-{timestamp}`.
-When the selector contains a comma (e.g. `h1, #mp-welcome`), the querySelectorAll works fine
-but the tagged attribute can conflict across elements from different parts of the selector.
-
-**Fix**: Validate/normalize comma-separated selectors in NthLocator.
+### Infrastructure
+- CDP `Input.dispatchMouseEvent` (real click) ✅
+- scrollIntoView before click ✅
+- SPA navigation await after click ✅
+- localStorage/sessionStorage clear on reset ✅
+- Context prewarming ✅
 
 ---
 
-## How to Run Compat Tests
+## Remaining Issues
 
-```bash
-# Single test file
-node --import tsx/esm compat/runner.mjs your-test.js [--base-url=http://...] [--workers=N]
-
-# Benchmark vs Playwright
-node --import tsx/esm compat/bench.mjs your-test.js --base-url=http://...
-
-# All known issues
-cat compat/issues.json
-```
+| Issue | Root Cause | Effort |
+|-------|-----------|--------|
+| SauceDemo React login | React SPA深い遷移待機 | M |
+| demoqa scrollIntoView | 動的コンテンツの viewport 計算 | S |
+| playwright-dev :text() / all() | data-kaze-idx 属性衝突 | S |
+| wikipedia comma-selector | 複雑な複合セレクタ | S |
 
 ---
 
-## Implementation Status
+## P2 Features (future)
 
-| Feature | Status | PR |
-|---------|--------|-----|
-| locator.first/last/nth | ✅ Done | main |
-| page.evaluate() | ✅ Done | main |
-| keyboard.press keyCode fix | ✅ Done | main |
-| page.url() post-click refresh | ✅ Done | main |
-| getByText/Label/Placeholder/TestId | 🔲 TODO | — |
-| toHaveClass / toHaveAttribute | 🔲 TODO | — |
-| CDP Input.dispatchMouseEvent | 🔲 TODO | — |
-| getByRole | 🔲 TODO | — |
+| Feature | Impact |
+|---------|--------|
+| iframe / frame support | Medium |
+| drag-and-drop | Low |
+| Firefox/WebKit (BiDi) | High |
