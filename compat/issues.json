@@ -1,0 +1,97 @@
+{
+  "version": "0.1.0",
+  "lastUpdated": "2026-07-01",
+  "issues": [
+    {
+      "id": "PW001",
+      "api": "page.getByRole",
+      "status": "not-implemented",
+      "description": "Playwright's accessibility-based selector using ARIA roles. Selects elements by their computed ARIA role.",
+      "workaround": "Use page.locator() with CSS selectors (e.g. page.locator('button') or page.locator('[role=\"button\"]'))"
+    },
+    {
+      "id": "PW002",
+      "api": "page.evaluate",
+      "status": "partial",
+      "description": "Executes JavaScript in the browser context and returns the result. Basic usage is supported via the CDP Runtime domain.",
+      "workaround": "Available via kaze's Page API. Complex serialization of non-JSON-safe values may not be supported."
+    },
+    {
+      "id": "PW003",
+      "api": "page.getByText",
+      "status": "not-implemented",
+      "description": "Locates elements by their visible text content.",
+      "workaround": "Use page.locator(':text(\"...\")') or page.locator('*') and filter by textContent in page.evaluate()"
+    },
+    {
+      "id": "PW004",
+      "api": "page.getByLabel",
+      "status": "not-implemented",
+      "description": "Locates form controls by their associated label text.",
+      "workaround": "Use page.locator('label') to find the label, then locate the associated input by id/for attribute."
+    },
+    {
+      "id": "PW005",
+      "api": "page.getByPlaceholder",
+      "status": "not-implemented",
+      "description": "Locates input elements by placeholder attribute.",
+      "workaround": "Use page.locator('[placeholder=\"...\"]')"
+    },
+    {
+      "id": "PW006",
+      "api": "page.getByTestId",
+      "status": "not-implemented",
+      "description": "Locates elements by data-testid attribute (configurable in Playwright).",
+      "workaround": "Use page.locator('[data-testid=\"...\"]')"
+    },
+    {
+      "id": "PW007",
+      "api": "page.waitForLoadState",
+      "status": "not-implemented",
+      "description": "Waits until the page reaches a specific load state (load, domcontentloaded, networkidle).",
+      "workaround": "Use page.waitForSelector() on an element that appears after page load, or add a brief explicit wait."
+    },
+    {
+      "id": "PW008",
+      "api": "page.waitForURL",
+      "status": "not-implemented",
+      "description": "Waits for the page URL to match a pattern.",
+      "workaround": "Poll page.url() in a loop or use page.waitForSelector() on an element unique to the target page."
+    },
+    {
+      "id": "PW009",
+      "api": "frameLocator / page.frame",
+      "status": "not-implemented",
+      "description": "Playwright's iframe / frame support for interacting with content inside frames.",
+      "workaround": "Not currently supported. Use main-frame-only tests."
+    },
+    {
+      "id": "PW010",
+      "api": "page.dragAndDrop",
+      "status": "not-implemented",
+      "description": "Drag-and-drop interaction between two elements.",
+      "workaround": "Use page.evaluate() to dispatch mousedown/mousemove/mouseup events manually."
+    },
+    {
+      "id": "PW011",
+      "api": "page.route / page.unroute",
+      "status": "partial",
+      "description": "Network interception and request mocking. kaze has a Route API but coverage differs from Playwright.",
+      "workaround": "Use kaze's built-in Route API. See src/api/Route.ts for supported options."
+    },
+    {
+      "id": "PW012",
+      "api": "expect(locator).toHaveCount",
+      "status": "not-implemented",
+      "description": "Asserts the number of elements matching the locator.",
+      "workaround": "Use locator.count() directly and assert with primitive expect()."
+    },
+    {
+      "id": "PW013",
+      "api": "expect(locator).toBeVisible / toBeHidden",
+      "status": "not-implemented",
+      "description": "Visibility assertions for locators.",
+      "workaround": "Use locator.isVisible() / locator.isHidden() and assert the boolean with primitive expect()."
+    }
+  ]
+}

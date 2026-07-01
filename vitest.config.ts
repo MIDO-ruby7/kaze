@@ -8,6 +8,7 @@ export default defineConfig({
       "**/node_modules/**",
       "**/dist/**",
       "examples/demo.spec.js", // kaze CLI demo, not a vitest test
+      "compat/**",              // compat runner specs use kaze API, not vitest
     ],
     coverage: {
       provider: "v8",

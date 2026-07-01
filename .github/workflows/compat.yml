@@ -1,0 +1,52 @@
+name: Playwright Compat Check
+
+on:
+  schedule:
+    - cron: '0 9 * * 1'  # Every Monday at 09:00 UTC
+  workflow_dispatch:       # Manual trigger
+
+jobs:
+  compat:
+    name: Playwright compatibility check
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build kaze
+        run: pnpm build
+
+      - name: Unit tests (no Chromium required)
+        run: pnpm test --reporter=verbose
+        env:
+          KAZE_SKIP_E2E: "1"
+
+      - name: Run compat example spec
+        run: |
+          FIXTURE_URL="${{ vars.FIXTURE_URL || '' }}"
+          if [ -z "$FIXTURE_URL" ]; then
+            FIXTURE_URL="file://$(pwd)/examples/fixtures/index.html"
+          fi
+          node compat/runner.mjs compat/example.spec.js \
+            --base-url="$FIXTURE_URL" \
+            --json
+        env:
+          KAZE_SKIP_E2E: "1"
+
+      - name: Upload compat results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: compat-results-${{ github.run_number }}
+          path: compat-results.json
+          retention-days: 30

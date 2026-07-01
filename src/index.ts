@@ -20,7 +20,7 @@ export { expect } from "./api/expect.js";
 export { Page, createPage } from "./api/Page.js";
 export { Locator } from "./api/Locator.js";
 export { Route } from "./api/Route.js";
-export { collectTestCases } from "./api/test.js";
+export { collectTestCases, _resetRegistry } from "./api/test.js";
 
 // Re-export types for consumers
 export type { GotoOptions, WaitForSelectorOptions } from "./api/Page.js";
