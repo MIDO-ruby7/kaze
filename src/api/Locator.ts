@@ -96,6 +96,15 @@ export class Locator {
       })()`,
     );
 
+    // Schedule a single cleanup after all Locators have been used.
+    // 5 seconds is enough for typical action chains; use i === 0 guard so only
+    // one setTimeout is registered regardless of how many elements matched.
+    setTimeout(() => {
+      this.page._evaluate(
+        `document.querySelectorAll('[${tag}]').forEach(el => el.removeAttribute('${tag}'))`
+      ).catch(() => {});
+    }, 5000);
+
     return Array.from({ length: n }, (_, i) =>
       new Locator(this.page, `[${tag}="${i}"]`),
     );

@@ -961,6 +961,22 @@ export class CdpAdapter implements ProtocolAdapter {
         button: "left",
         clickCount: 1,
       });
+
+      // Step 3: Also dispatch a JS click event (for frameworks like React that
+      // listen via synthetic events), and a submit event when the element is a
+      // type="submit" button inside a form.
+      await session.send("Runtime.evaluate", {
+        expression: `(function() {
+    const el = document.querySelector('${escaped}')
+    if (!el) return
+    el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    if ((el.type === 'submit' || el.getAttribute('type') === 'submit') && el.form) {
+      el.form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+    }
+  })()`,
+        returnByValue: false,
+        awaitPromise: false,
+      });
       return;
     }
 
