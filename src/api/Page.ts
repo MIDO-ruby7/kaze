@@ -24,6 +24,17 @@ function isElementNotFound(err: unknown): boolean {
 export interface GotoOptions {
   /** Maximum navigation timeout in milliseconds. Defaults to 30000. */
   timeout?: number;
+  /**
+   * When to consider the navigation as finished.
+   * - 'load' (default): wait for the load event (already handled by adapter.navigate)
+   * - 'domcontentloaded': wait until DOMContentLoaded fires
+   * - 'networkidle': wait until there are no network requests for 500ms
+   * - 'commit': resolve as soon as the initial HTML is received
+   *
+   * Use 'networkidle' for CSR frameworks (React, Vue, etc.) that render
+   * asynchronously after the load event.
+   */
+  waitUntil?: 'load' | 'domcontentloaded' | 'networkidle' | 'commit';
 }
 
 export interface WaitForSelectorOptions {
@@ -112,8 +123,19 @@ export class Page {
   }
 
   /** Navigate to a URL and wait for the page to load. */
-  async goto(url: string, _opts?: GotoOptions): Promise<void> {
+  async goto(url: string, opts?: GotoOptions): Promise<void> {
     await this.adapter.navigate(this.contextId, url);
+
+    // CSR framework support: additional wait after the load event.
+    // adapter.navigate already waits for loadEventFired; for React/Vue/etc.
+    // the DOM continues rendering after load, so callers can opt in to a
+    // stricter ready condition via waitUntil.
+    if (opts?.waitUntil === 'networkidle') {
+      await this.waitForLoadState('networkidle', { timeout: opts.timeout });
+    } else if (opts?.waitUntil === 'domcontentloaded') {
+      await this.waitForLoadState('domcontentloaded', { timeout: opts.timeout });
+    }
+    // 'load' and 'commit' are already satisfied by adapter.navigate completing.
   }
 
   /**
