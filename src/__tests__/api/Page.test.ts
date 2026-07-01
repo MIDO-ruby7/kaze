@@ -39,8 +39,13 @@ describe("Page", () => {
   });
 
   it("click delegates to adapter.dispatchEvent with 'click'", async () => {
-    // waitForSelector resolves immediately (element found), then dispatches
-    (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+    // waitForSelector resolves immediately (element found), then dispatches.
+    // After dispatch, click reads location.href once for SPA nav check.
+    const url = "http://example.com/";
+    (adapter.evaluate as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(true)  // waitForSelector: found
+      .mockResolvedValueOnce(url)   // urlBefore
+      .mockResolvedValueOnce(url);  // urlAfter (same — no nav wait)
     await page.click("#btn");
     expect(adapter.dispatchEvent).toHaveBeenCalledWith("ctx-1", "#btn", "click");
   });
@@ -129,9 +134,12 @@ describe("Page", () => {
 
   // AC-1: click waits for element before dispatching
   it("click retries until element is found, then dispatches", async () => {
+    const url = "http://example.com/";
     (adapter.evaluate as ReturnType<typeof vi.fn>)
-      .mockResolvedValueOnce(false)
-      .mockResolvedValueOnce(true);
+      .mockResolvedValueOnce(false)  // waitForSelector: not found
+      .mockResolvedValueOnce(true)   // waitForSelector: found
+      .mockResolvedValueOnce(url)    // urlBefore
+      .mockResolvedValueOnce(url);   // urlAfter (same — no nav wait)
 
     await page.click("#btn");
     expect(adapter.dispatchEvent).toHaveBeenCalledWith("ctx-1", "#btn", "click");
@@ -184,7 +192,11 @@ describe("Page", () => {
 
   // AC-7: individual timeout option
   it("click accepts { timeout } option", async () => {
-    (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValue(true);
+    const url = "http://example.com/";
+    (adapter.evaluate as ReturnType<typeof vi.fn>)
+      .mockResolvedValueOnce(true)  // waitForSelector: found
+      .mockResolvedValueOnce(url)   // urlBefore
+      .mockResolvedValueOnce(url);  // urlAfter (same — no nav wait)
     await page.click("#slow-btn", { timeout: 5000 });
     expect(adapter.dispatchEvent).toHaveBeenCalledWith("ctx-1", "#slow-btn", "click");
   });
@@ -208,15 +220,16 @@ describe("Page", () => {
       // throws "Element not found" once (element detached mid-flight), then
       // on the second iteration waitForSelector finds it again and click succeeds.
       // After each successful click, the SPA navigation check reads location.href
-      // once (urlBefore) before dispatch and once (urlAfter) after; returning the
-      // same URL causes the nav-wait loop to exit immediately at navDeadline.
+      // once (urlBefore) before dispatch and once (urlAfter) after 150ms;
+      // returning the same URL means no extra wait.
       const sameUrl = "http://example.com/";
       (adapter.evaluate as ReturnType<typeof vi.fn>)
         .mockResolvedValueOnce(true)      // 1st waitForSelector: found
         .mockResolvedValueOnce(sameUrl)   // urlBefore (1st attempt)
+        .mockResolvedValueOnce(sameUrl)   // urlAfter (1st attempt — same URL, no nav wait)
         .mockResolvedValueOnce(true)      // 2nd waitForSelector (after retry): found
         .mockResolvedValueOnce(sameUrl)   // urlBefore (2nd attempt)
-        .mockResolvedValue(sameUrl);      // urlAfter polling — same URL, exits when navDeadline reached
+        .mockResolvedValueOnce(sameUrl);  // urlAfter (2nd attempt — same URL, no nav wait)
       (adapter.dispatchEvent as ReturnType<typeof vi.fn>)
         .mockRejectedValueOnce(new Error("Element not found: #btn"))
         .mockResolvedValueOnce(undefined);
