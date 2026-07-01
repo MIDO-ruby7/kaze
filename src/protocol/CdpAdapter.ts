@@ -946,7 +946,18 @@ export class CdpAdapter implements ProtocolAdapter {
         if (!inViewport) throw new Error(`Element still outside viewport after scroll: "${selector}" (${x},${y})`);
       }
 
-      // Step 2: Send CDP mouse events (mousePressed + mouseReleased)
+      // Step 2: Send CDP mouse events (mouseMoved + mousePressed + mouseReleased)
+      // Send mouseMoved first so React onMouseEnter/onMouseOver handlers fire
+      // before the click, matching Playwright's behavior with React SPAs.
+      await session.send("Input.dispatchMouseEvent", {
+        type: "mouseMoved",
+        x,
+        y,
+        button: "none",
+        clickCount: 0,
+      });
+      // Small delay for React to process the hover state
+      await new Promise(r => setTimeout(r, 10));
       await session.send("Input.dispatchMouseEvent", {
         type: "mousePressed",
         x,

@@ -144,31 +144,25 @@ describe("Locator", () => {
   // AC-1: all()
   // -------------------------------------------------------------------------
   describe("all()", () => {
-    it("returns an array of Locators using data-kaze-idx selectors", async () => {
-      // First evaluate: count() → 2
-      // Second evaluate: attribute assignment (returns undefined)
-      (adapter.evaluate as ReturnType<typeof vi.fn>)
-        .mockResolvedValueOnce(2)
-        .mockResolvedValueOnce(undefined);
+    it("returns an array of NthLocators using index-based resolution", async () => {
+      // Only evaluate: count() → 2 (NthLocator uses querySelectorAll[i] at action time)
+      (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValueOnce(2);
       const locators = await locator.all();
       expect(locators).toHaveLength(2);
       expect(locators[0]).toBeInstanceOf(Locator);
       expect(locators[1]).toBeInstanceOf(Locator);
-      // Each Locator should use a unique timestamped data-kz-all-* attribute
-      // to avoid cross-test attribute pollution (selector includes per-call unique suffix)
-      expect(locators[0].selector).toMatch(/^\[data-kz-all-\d+-[a-z0-9]+=["']?0["']?\]$/);
-      expect(locators[1].selector).toMatch(/^\[data-kz-all-\d+-[a-z0-9]+=["']?1["']?\]$/);
+      // NthLocator stores the original selector (not an attribute selector)
+      expect(locators[0].selector).toBe("#result");
+      expect(locators[1].selector).toBe("#result");
     });
 
-    it("passes a script that assigns data-kaze-idx attributes", async () => {
-      (adapter.evaluate as ReturnType<typeof vi.fn>)
-        .mockResolvedValueOnce(1)
-        .mockResolvedValueOnce(undefined);
+    it("all() only calls evaluate once (count) — no attribute tagging", async () => {
+      (adapter.evaluate as ReturnType<typeof vi.fn>).mockResolvedValueOnce(1);
       await locator.all();
       const calls = (adapter.evaluate as ReturnType<typeof vi.fn>).mock.calls;
-      const attrScript = calls[1][1] as string;
-      expect(attrScript).toContain("data-kz-all-");
-      expect(attrScript).toContain("querySelectorAll");
+      // Only the count() evaluate should have been called
+      expect(calls).toHaveLength(1);
+      expect(calls[0][1] as string).toContain("querySelectorAll");
     });
 
     it("returns empty array when count is 0", async () => {

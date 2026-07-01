@@ -76,38 +76,15 @@ export class Locator {
   /**
    * Return all matching elements as an array of Locators.
    * AC-7 (Issue #31): Each returned Locator resolves to querySelectorAll(selector)[i]
-   * regardless of sibling structure. Uses data-kaze-idx attributes to uniquely
-   * identify each matched element by index rather than CSS :nth-child position.
+   * at action time via NthLocator, so attribute-based approaches are not used.
+   * This avoids breakage when the page re-renders and strips data attributes.
    */
   async all(): Promise<Locator[]> {
     const n = await this.count();
     if (n === 0) return [];
-
-    const escapedSel = escapeSelector(this.selector);
-    // Use a distinct "kz-all" prefix to avoid collisions with NthLocator
-    // ("kz-nth"), ByTextLocator ("kz-txt"), ByRoleLocator ("kz-role"), and
-    // FilterLocator ("kaze-filter"). A timestamp+random suffix guarantees
-    // uniqueness across concurrent all() calls on the same page.
-    const tag = `data-kz-all-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
-    await this.page._evaluate(
-      `(function() {
-        const els = document.querySelectorAll('${escapedSel}');
-        els.forEach((el, i) => el.setAttribute('${tag}', String(i)));
-      })()`,
-    );
-
-    // Schedule a single cleanup after all Locators have been used.
-    // 5 seconds is enough for typical action chains; use i === 0 guard so only
-    // one setTimeout is registered regardless of how many elements matched.
-    setTimeout(() => {
-      this.page._evaluate(
-        `document.querySelectorAll('[${tag}]').forEach(el => el.removeAttribute('${tag}'))`
-      ).catch(() => {});
-    }, 5000);
-
-    return Array.from({ length: n }, (_, i) =>
-      new Locator(this.page, `[${tag}="${i}"]`),
-    );
+    // NthLocator uses querySelectorAll[index] at action time — no attribute tagging,
+    // so re-renders cannot invalidate the reference.
+    return Array.from({ length: n }, (_, i) => new NthLocator(this.page, this.selector, i));
   }
 
   /**
