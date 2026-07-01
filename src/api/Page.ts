@@ -12,7 +12,7 @@
 import type { PooledContext } from "../pool/types.js";
 import type { ProtocolAdapter } from "../protocol/index.js";
 
-import { Locator, ByTextLocator, type GetByTextOptions } from "./Locator.js";
+import { Locator, ByTextLocator, ByRoleLocator, type GetByTextOptions, type AriaRole, type GetByRoleOptions } from "./Locator.js";
 import { Route, type FulfillOptions } from "./Route.js";
 import { escapeSelector } from "./utils.js";
 
@@ -469,6 +469,23 @@ export class Page {
    */
   getByTestId(id: string): Locator {
     return new Locator(this, `[data-testid="${id}"]`);
+  }
+
+  /**
+   * AC-1 (Issue #47): Return a Locator for elements matching the given ARIA role.
+   *
+   * Supports all WAI-ARIA 1.2 roles (AC-2). Implicit HTML roles are mapped to
+   * their natural CSS selectors (e.g. "button" → `button, [role="button"], ...`).
+   * Unknown roles fall back to `[role="${role}"]`.
+   *
+   * Options:
+   * - `{ name }` — filter by accessible name (aria-label → aria-labelledby →
+   *   textContent). Accepts string or RegExp. (AC-3)
+   * - `{ exact }` — when true, name must match exactly (case-sensitive).
+   *   Default: false (partial match). (AC-4)
+   */
+  getByRole(role: AriaRole, opts?: GetByRoleOptions): Locator {
+    return new ByRoleLocator(this, role, opts);
   }
 
   /**

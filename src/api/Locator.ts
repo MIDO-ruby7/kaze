@@ -339,6 +339,103 @@ export interface GetByTextOptions {
 }
 
 /**
+ * AriaRole — ARIA role values supported by getByRole().
+ * Covers all WAI-ARIA 1.2 roles (abstract roles excluded).
+ */
+export type AriaRole =
+  | "alert"
+  | "alertdialog"
+  | "application"
+  | "article"
+  | "banner"
+  | "blockquote"
+  | "button"
+  | "caption"
+  | "cell"
+  | "checkbox"
+  | "code"
+  | "columnheader"
+  | "combobox"
+  | "complementary"
+  | "contentinfo"
+  | "definition"
+  | "deletion"
+  | "dialog"
+  | "document"
+  | "emphasis"
+  | "feed"
+  | "figure"
+  | "form"
+  | "generic"
+  | "grid"
+  | "gridcell"
+  | "group"
+  | "heading"
+  | "img"
+  | "insertion"
+  | "link"
+  | "list"
+  | "listbox"
+  | "listitem"
+  | "log"
+  | "main"
+  | "mark"
+  | "marquee"
+  | "math"
+  | "meter"
+  | "menu"
+  | "menubar"
+  | "menuitem"
+  | "menuitemcheckbox"
+  | "menuitemradio"
+  | "navigation"
+  | "none"
+  | "option"
+  | "paragraph"
+  | "presentation"
+  | "progressbar"
+  | "radio"
+  | "radiogroup"
+  | "region"
+  | "row"
+  | "rowgroup"
+  | "rowheader"
+  | "scrollbar"
+  | "search"
+  | "searchbox"
+  | "separator"
+  | "slider"
+  | "spinbutton"
+  | "status"
+  | "strong"
+  | "subscript"
+  | "superscript"
+  | "switch"
+  | "tab"
+  | "table"
+  | "tablist"
+  | "tabpanel"
+  | "term"
+  | "textbox"
+  | "time"
+  | "timer"
+  | "toolbar"
+  | "tooltip"
+  | "tree"
+  | "treegrid"
+  | "treeitem";
+
+/**
+ * GetByRoleOptions — options for getByRole().
+ */
+export interface GetByRoleOptions {
+  /** Filter by accessible name (aria-label, aria-labelledby, or textContent). */
+  name?: string | RegExp;
+  /** When true, name must match exactly. Default: false (partial match). */
+  exact?: boolean;
+}
+
+/**
  * ByTextLocator — a Locator that resolves by tagging a matching element at
  * action time, using an evaluate-based DOM scan.
  *
@@ -487,4 +584,362 @@ export class NthLocator extends Locator {
     const sel = await this._resolveNth();
     return new Locator(this.page as Page, sel).count();
   }
+}
+
+/**
+ * ByRoleLocator — a Locator that resolves by ARIA role at action time.
+ *
+ * Implements AC-1..AC-4 of Issue #47: page.getByRole(role, opts?).
+ *
+ * Resolution strategy (mirrors ByTextLocator):
+ * 1. Build a CSS selector from the role using implicit HTML role mappings.
+ * 2. Iterate matching elements; filter by accessible name when opts.name
+ *    is provided (aria-label → aria-labelledby → textContent order).
+ * 3. Tag the first matching element with a unique data-kaze-role-* attribute
+ *    so that subsequent Locator actions can address it precisely.
+ */
+export class ByRoleLocator extends Locator {
+  constructor(
+    page: Page,
+    private readonly _role: AriaRole,
+    private readonly _opts?: GetByRoleOptions,
+  ) {
+    super(page, "");
+  }
+
+  /** Tag the matching element and return the unique attribute selector. */
+  private async _resolve(): Promise<string> {
+    const tag = `data-kaze-role-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const script = buildByRoleScript(this._role, this._opts, tag);
+    await (this.page as Page)._evaluate(script);
+    return `[${tag}]`;
+  }
+
+  private async _withResolved<T>(fn: (loc: Locator) => Promise<T>): Promise<T> {
+    const sel = await this._resolve();
+    return fn(new Locator(this.page as Page, sel));
+  }
+
+  async click(opts?: Parameters<Locator["click"]>[0]): Promise<void> {
+    return this._withResolved(l => l.click(opts));
+  }
+  async fill(value: string, opts?: Parameters<Locator["fill"]>[1]): Promise<void> {
+    return this._withResolved(l => l.fill(value, opts));
+  }
+  async textContent(opts?: Parameters<Locator["textContent"]>[0]): Promise<string | null> {
+    return this._withResolved(l => l.textContent(opts));
+  }
+  async innerText(opts?: Parameters<Locator["innerText"]>[0]): Promise<string> {
+    return this._withResolved(l => l.innerText(opts));
+  }
+  async getAttribute(name: string, opts?: Parameters<Locator["getAttribute"]>[1]): Promise<string | null> {
+    return this._withResolved(l => l.getAttribute(name, opts));
+  }
+  async inputValue(opts?: Parameters<Locator["inputValue"]>[0]): Promise<string> {
+    return this._withResolved(l => l.inputValue(opts));
+  }
+  async isVisible(): Promise<boolean> {
+    return this._withResolved(l => l.isVisible());
+  }
+  async isEnabled(): Promise<boolean> {
+    return this._withResolved(l => l.isEnabled());
+  }
+  async hover(opts?: Parameters<Locator["hover"]>[0]): Promise<void> {
+    return this._withResolved(l => l.hover(opts));
+  }
+  async check(opts?: Parameters<Locator["check"]>[0]): Promise<void> {
+    return this._withResolved(l => l.check(opts));
+  }
+  async uncheck(opts?: Parameters<Locator["uncheck"]>[0]): Promise<void> {
+    return this._withResolved(l => l.uncheck(opts));
+  }
+  async selectOption(
+    value: Parameters<Locator["selectOption"]>[0],
+    opts?: Parameters<Locator["selectOption"]>[1],
+  ): Promise<void> {
+    return this._withResolved(l => l.selectOption(value, opts));
+  }
+  async count(): Promise<number> {
+    const sel = await this._resolve();
+    return new Locator(this.page as Page, sel).count();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Internal helpers for ByRoleLocator
+// ---------------------------------------------------------------------------
+
+/**
+ * Map an ARIA role to a CSS selector that matches elements with that implicit
+ * or explicit role.  Falls back to `[role="${role}"]` for roles without a
+ * well-known HTML mapping.
+ */
+function roleToSelector(role: AriaRole): string {
+  switch (role) {
+    case "button":
+      return 'button, [role="button"], input[type="button"], input[type="submit"], input[type="reset"]';
+    case "link":
+      return 'a[href], [role="link"]';
+    case "textbox":
+      return 'input:not([type]), input[type="text"], input[type="email"], input[type="tel"], input[type="url"], input[type="search"], input[type="password"], textarea, [role="textbox"]';
+    case "checkbox":
+      return 'input[type="checkbox"], [role="checkbox"]';
+    case "radio":
+      return 'input[type="radio"], [role="radio"]';
+    case "combobox":
+      return 'select, [role="combobox"]';
+    case "listbox":
+      return 'select[multiple], [role="listbox"]';
+    case "option":
+      return 'option, [role="option"]';
+    case "menuitem":
+      return '[role="menuitem"]';
+    case "menuitemcheckbox":
+      return '[role="menuitemcheckbox"]';
+    case "menuitemradio":
+      return '[role="menuitemradio"]';
+    case "tab":
+      return '[role="tab"]';
+    case "tabpanel":
+      return '[role="tabpanel"]';
+    case "tablist":
+      return '[role="tablist"]';
+    case "heading":
+      return 'h1, h2, h3, h4, h5, h6, [role="heading"]';
+    case "img":
+      return 'img, [role="img"]';
+    case "list":
+      return 'ul, ol, [role="list"]';
+    case "listitem":
+      return 'li, [role="listitem"]';
+    case "table":
+      return 'table, [role="table"]';
+    case "row":
+      return 'tr, [role="row"]';
+    case "cell":
+      return 'td, [role="cell"]';
+    case "columnheader":
+      return 'th[scope="col"], th:not([scope]), [role="columnheader"]';
+    case "rowheader":
+      return 'th[scope="row"], [role="rowheader"]';
+    case "grid":
+      return '[role="grid"]';
+    case "gridcell":
+      return '[role="gridcell"]';
+    case "dialog":
+      return 'dialog, [role="dialog"]';
+    case "alertdialog":
+      return '[role="alertdialog"]';
+    case "alert":
+      return '[role="alert"]';
+    case "status":
+      return '[role="status"]';
+    case "log":
+      return '[role="log"]';
+    case "progressbar":
+      return 'progress, [role="progressbar"]';
+    case "slider":
+      return 'input[type="range"], [role="slider"]';
+    case "spinbutton":
+      return 'input[type="number"], [role="spinbutton"]';
+    case "searchbox":
+      return 'input[type="search"], [role="searchbox"]';
+    case "separator":
+      return 'hr, [role="separator"]';
+    case "scrollbar":
+      return '[role="scrollbar"]';
+    case "form":
+      return 'form, [role="form"]';
+    case "search":
+      return '[role="search"]';
+    case "navigation":
+      return 'nav, [role="navigation"]';
+    case "main":
+      return 'main, [role="main"]';
+    case "banner":
+      return 'header, [role="banner"]';
+    case "contentinfo":
+      return 'footer, [role="contentinfo"]';
+    case "complementary":
+      return 'aside, [role="complementary"]';
+    case "region":
+      return 'section, [role="region"]';
+    case "article":
+      return 'article, [role="article"]';
+    case "figure":
+      return 'figure, [role="figure"]';
+    case "group":
+      return 'fieldset, optgroup, [role="group"]';
+    case "radiogroup":
+      return '[role="radiogroup"]';
+    case "menu":
+      return '[role="menu"]';
+    case "menubar":
+      return '[role="menubar"]';
+    case "tree":
+      return '[role="tree"]';
+    case "treeitem":
+      return '[role="treeitem"]';
+    case "treegrid":
+      return '[role="treegrid"]';
+    case "toolbar":
+      return '[role="toolbar"]';
+    case "tooltip":
+      return '[role="tooltip"]';
+    case "feed":
+      return '[role="feed"]';
+    case "switch":
+      return '[role="switch"]';
+    case "math":
+      return 'math, [role="math"]';
+    case "meter":
+      return 'meter, [role="meter"]';
+    case "timer":
+      return '[role="timer"]';
+    case "marquee":
+      return '[role="marquee"]';
+    case "application":
+      return '[role="application"]';
+    case "document":
+      return '[role="document"]';
+    case "note":
+      return '[role="note"]';
+    case "term":
+      return 'dfn, [role="term"]';
+    case "definition":
+      return '[role="definition"]';
+    case "paragraph":
+      return 'p, [role="paragraph"]';
+    case "blockquote":
+      return 'blockquote, [role="blockquote"]';
+    case "caption":
+      return 'caption, [role="caption"]';
+    case "code":
+      return 'code, [role="code"]';
+    case "deletion":
+      return 'del, [role="deletion"]';
+    case "emphasis":
+      return 'em, [role="emphasis"]';
+    case "insertion":
+      return 'ins, [role="insertion"]';
+    case "strong":
+      return 'strong, [role="strong"]';
+    case "subscript":
+      return 'sub, [role="subscript"]';
+    case "superscript":
+      return 'sup, [role="superscript"]';
+    case "time":
+      return 'time, [role="time"]';
+    case "mark":
+      return 'mark, [role="mark"]';
+    case "generic":
+      return '[role="generic"]';
+    case "none":
+    case "presentation":
+      return '[role="none"], [role="presentation"]';
+    case "rowgroup":
+      return 'thead, tbody, tfoot, [role="rowgroup"]';
+    default:
+      return `[role="${role}"]`;
+  }
+}
+
+/**
+ * Build the evaluate script that finds an element by role + optional name,
+ * tags it with `tag`, and returns nothing.
+ *
+ * Name resolution order (mirrors ARIA spec):
+ *   1. aria-label attribute
+ *   2. aria-labelledby → referenced element's textContent
+ *   3. element's own textContent
+ */
+function buildByRoleScript(role: AriaRole, opts: GetByRoleOptions | undefined, tag: string): string {
+  const cssSel = roleToSelector(role).replace(/'/g, "\\'");
+
+  if (!opts?.name) {
+    // No name filter — tag the first element matching the role selector.
+    return `(function(){
+      var els = document.querySelectorAll('${cssSel}');
+      if (els.length > 0) els[0].setAttribute('${tag}', '1');
+    })()`;
+  }
+
+  const exact = opts.exact ?? false;
+
+  // Serialize the name matcher into the script.
+  // name can be a string or RegExp; we handle both via inline JS.
+  let nameMatcher: string;
+  if (opts.name instanceof RegExp) {
+    nameMatcher = `/${opts.name.source}/${opts.name.flags}`;
+  } else {
+    const escapedName = opts.name.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+    if (exact) {
+      nameMatcher = `'${escapedName}'`;
+    } else {
+      nameMatcher = `'${escapedName}'`;
+    }
+  }
+
+  const isRegExp = opts.name instanceof RegExp;
+
+  if (isRegExp) {
+    return `(function(){
+      var pattern = ${nameMatcher};
+      var els = document.querySelectorAll('${cssSel}');
+      for (var i = 0; i < els.length; i++) {
+        var el = els[i];
+        var accName = el.getAttribute('aria-label') || '';
+        if (!accName && el.getAttribute('aria-labelledby')) {
+          var ref = document.getElementById(el.getAttribute('aria-labelledby'));
+          if (ref) accName = ref.textContent || '';
+        }
+        if (!accName) accName = el.textContent || '';
+        accName = accName.trim();
+        if (pattern.test(accName)) {
+          el.setAttribute('${tag}', '1');
+          break;
+        }
+      }
+    })()`;
+  }
+
+  if (exact) {
+    return `(function(){
+      var name = ${nameMatcher};
+      var els = document.querySelectorAll('${cssSel}');
+      for (var i = 0; i < els.length; i++) {
+        var el = els[i];
+        var accName = el.getAttribute('aria-label') || '';
+        if (!accName && el.getAttribute('aria-labelledby')) {
+          var ref = document.getElementById(el.getAttribute('aria-labelledby'));
+          if (ref) accName = ref.textContent || '';
+        }
+        if (!accName) accName = el.textContent || '';
+        accName = accName.trim();
+        if (accName === name) {
+          el.setAttribute('${tag}', '1');
+          break;
+        }
+      }
+    })()`;
+  }
+
+  return `(function(){
+    var name = ${nameMatcher};
+    var els = document.querySelectorAll('${cssSel}');
+    for (var i = 0; i < els.length; i++) {
+      var el = els[i];
+      var accName = el.getAttribute('aria-label') || '';
+      if (!accName && el.getAttribute('aria-labelledby')) {
+        var ref = document.getElementById(el.getAttribute('aria-labelledby'));
+        if (ref) accName = ref.textContent || '';
+      }
+      if (!accName) accName = el.textContent || '';
+      accName = accName.trim();
+      if (accName.indexOf(name) !== -1) {
+        el.setAttribute('${tag}', '1');
+        break;
+      }
+    }
+  })()`;
 }
