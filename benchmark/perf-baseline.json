@@ -1,8 +1,8 @@
 {
-  "contextReset_ms": 247,
-  "navigate_ms": 74,
-  "evaluate_ms": 6,
-  "newContext_ms": 921,
-  "throughput_10_ms_per_test": 67,
-  "throughput_20_ms_per_test": 120
+  "contextReset_ms": 251,
+  "navigate_ms": 62,
+  "evaluate_ms": 4,
+  "newContext_ms": 950,
+  "throughput_10_ms_per_test": 73,
+  "throughput_20_ms_per_test": 184
 }

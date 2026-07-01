@@ -1,12 +1,12 @@
 {
-  "timestamp": "2026-07-01T13:45:10.791Z",
-  "gitCommit": "477e839",
+  "timestamp": "2026-07-01T16:38:09.688Z",
+  "gitCommit": "ee368b7",
   "results": {
-    "contextReset_ms": 164.5,
-    "navigate_ms": 49.3,
-    "evaluate_ms": 3.7,
-    "newContext_ms": 613.5,
-    "throughput_10_ms_per_test": 44.3,
-    "throughput_20_ms_per_test": 79.9
+    "contextReset_ms": 167,
+    "navigate_ms": 40.7,
+    "evaluate_ms": 2.5,
+    "newContext_ms": 633.1,
+    "throughput_10_ms_per_test": 48.3,
+    "throughput_20_ms_per_test": 122.1
   }
 }

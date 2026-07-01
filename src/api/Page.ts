@@ -141,21 +141,12 @@ export class Page {
         // Wait up to 2000ms for URL change (SPA navigation), but never
         // beyond the outer click deadline. Exits immediately when navigation
         // is detected; adds no delay for non-navigation clicks.
-        // Initial 300ms pause gives async React click handlers time to start
-        // before we begin URL polling.
-        await new Promise(r => setTimeout(r, 300));
         const navDeadline = Math.min(Date.now() + 2000, deadline);
         while (Date.now() < navDeadline && !this._cancelled) {
           const urlAfter = await this.adapter.evaluate(this.contextId, "location.href") as string;
           if (urlAfter !== urlBefore) {
-            // URL changed — wait for document.readyState to reach 'complete'
-            // so the new page DOM is fully available before the next action.
-            const readyDeadline = Date.now() + 2000;
-            while (Date.now() < readyDeadline) {
-              const ready = await this.adapter.evaluate(this.contextId, "document.readyState");
-              if (ready === "complete") break;
-              await new Promise(r => setTimeout(r, 50));
-            }
+            // URL 変化後のみ 200ms 待機
+            await new Promise(r => setTimeout(r, 200));
             break;
           }
           await new Promise(r => setTimeout(r, 50));
