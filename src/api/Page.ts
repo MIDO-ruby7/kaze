@@ -376,11 +376,20 @@ export class Page {
       await this.adapter.evaluate(
         this.contextId,
         `(function() {
-          const keyCode = '${escapedKey}'.length === 1 ? '${escapedKey}'.charCodeAt(0) : 0;
-          const opts = { key: '${escapedKey}', code: '${escapedKey}', keyCode: keyCode, bubbles: true, cancelable: true };
-          document.dispatchEvent(new KeyboardEvent('keydown', opts));
-          document.dispatchEvent(new KeyboardEvent('keypress', opts));
-          document.dispatchEvent(new KeyboardEvent('keyup', opts));
+          // Named key → keyCode mapping (common keys)
+          const KEY_CODES = {
+            Enter: 13, Tab: 9, Escape: 27, Backspace: 8, Delete: 46, Space: 32,
+            ArrowUp: 38, ArrowDown: 40, ArrowLeft: 37, ArrowRight: 39,
+            Home: 36, End: 35, PageUp: 33, PageDown: 34, F1: 112, F2: 113,
+          };
+          const keyCode = KEY_CODES['${escapedKey}'] ?? ('${escapedKey}'.length === 1 ? '${escapedKey}'.charCodeAt(0) : 0);
+          const code = KEY_CODES['${escapedKey}'] ? 'Key${escapedKey}' : ('${escapedKey}'.length === 1 ? 'Key' + '${escapedKey}'.toUpperCase() : '${escapedKey}');
+          const opts = { key: '${escapedKey}', code: code, keyCode: keyCode, which: keyCode, charCode: keyCode, bubbles: true, cancelable: true };
+          // Dispatch on focused element first, then document (mirrors real browser)
+          const target = document.activeElement || document.body || document;
+          target.dispatchEvent(new KeyboardEvent('keydown', opts));
+          target.dispatchEvent(new KeyboardEvent('keypress', opts));
+          target.dispatchEvent(new KeyboardEvent('keyup', opts));
         })()`,
       );
     },

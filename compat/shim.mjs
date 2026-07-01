@@ -22,18 +22,38 @@ const BASE_URL = process.env.KAZE_BASE_URL ?? process.env.BASE_URL ?? ""
 // ---------------------------------------------------------------------------
 
 function patchPage(page) {
-  // baseURL support
-  if (BASE_URL) {
+  // baseURL + url() support
+  {
     const origGoto = page.goto.bind(page)
-    let _currentUrl = BASE_URL
+    const origClick = page.click.bind(page)
+    let _currentUrl = BASE_URL || ""
 
+    // goto with baseURL prefix
     page.goto = async (url, opts) => {
-      _currentUrl = url.startsWith("http") ? url : BASE_URL + url
-      return origGoto(_currentUrl, opts)
+      _currentUrl = (BASE_URL && !url.startsWith("http")) ? BASE_URL + url : url
+      const result = await origGoto(_currentUrl, opts)
+      // Refresh cached URL after navigation
+      try { _currentUrl = await (Object.getPrototypeOf(page).url?.call(page) ?? _currentUrl) } catch {}
+      return result
     }
 
-    // page.url() — synchronous return of the last navigated URL
+    // After click, update cached URL (handles SPA navigation)
+    page.click = async (selector, opts) => {
+      await origClick(selector, opts)
+      // Short delay for SPA navigation then refresh URL
+      await new Promise(r => setTimeout(r, 300))
+      try { _currentUrl = await (Object.getPrototypeOf(page).url?.call(page) ?? _currentUrl) } catch {}
+    }
+
+    // page.url() — Playwright-compatible synchronous return
+    // Also works with await (returns same string)
     page.url = () => _currentUrl
+
+    // Async refresh on demand (for toHaveURL polling)
+    page._refreshUrl = async () => {
+      try { _currentUrl = await (Object.getPrototypeOf(page).url?.call(page) ?? _currentUrl) } catch {}
+      return _currentUrl
+    }
   }
 
   // screenshot({ path }) — save buffer to disk
@@ -145,6 +165,23 @@ export const expect = (target) => {
   base.toBeTruthy = async () => {
     const exists = (typeof target.count === "function") ? await target.count().catch(() => 0) : (target ? 1 : 0)
     if (!exists) throw new Error("Expected element to be truthy (exist), but it was not found")
+  }
+
+  // Override toHaveURL on Page objects to use async URL refresh
+  if (target && typeof target._refreshUrl === "function") {
+    const origToHaveURL = base.toHaveURL?.bind(base)
+    base.toHaveURL = async (expected, opts) => {
+      const timeout = opts?.timeout ?? 15000
+      const deadline = Date.now() + timeout
+      const pattern = expected instanceof RegExp ? expected : new RegExp(String(expected).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+      while (Date.now() < deadline) {
+        const url = await target._refreshUrl()
+        if (typeof expected === "string" ? url.includes(expected) : pattern.test(url)) return
+        await new Promise(r => setTimeout(r, 100))
+      }
+      const url = await target._refreshUrl()
+      throw new Error(`Expected URL to match "${expected}" but got "${url}"`)
+    }
   }
 
   return base
