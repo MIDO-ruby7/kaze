@@ -88,8 +88,8 @@ test('my test', async (page) => { ... });
 | `locator.isVisible()` | Supported | Immediate (no auto-waiting); checks computed style |
 | `locator.isEnabled()` | Supported | Immediate (no auto-waiting); checks `el.disabled` |
 | `locator.inputValue()` | Supported | auto-waiting; returns `el.value` of input/textarea |
-| `locator.nth(index)` | Supported | Returns `NthLocator`; 0-indexed |
-| `locator.first()` / `locator.last()` | Supported | Returns `NthLocator` |
+| `locator.nth(index)` | Supported | Returns `NthLocator`; 0-indexed; works with comma selectors |
+| `locator.first()` / `locator.last()` | Supported | Returns `NthLocator`; works with comma selectors |
 | `locator.filter()` | Not supported | — |
 | `locator.waitFor()` | Not supported | Use `page.waitForSelector()` |
 | `locator.getAttribute(name, opts?)` | Supported | auto-waiting; returns `null` when attribute absent; default timeout 30000ms |
