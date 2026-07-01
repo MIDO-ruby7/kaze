@@ -390,6 +390,7 @@ export type AriaRole =
   | "menuitemradio"
   | "navigation"
   | "none"
+  | "note"
   | "option"
   | "paragraph"
   | "presentation"
@@ -660,8 +661,10 @@ export class ByRoleLocator extends Locator {
     return this._withResolved(l => l.selectOption(value, opts));
   }
   async count(): Promise<number> {
-    const sel = await this._resolve();
-    return new Locator(this.page as Page, sel).count();
+    const result = await (this.page as any)._evaluate(
+      buildByRoleCountScript(this._role, this._opts)
+    );
+    return Number(result ?? 0);
   }
 }
 
@@ -872,12 +875,13 @@ function buildByRoleScript(role: AriaRole, opts: GetByRoleOptions | undefined, t
   if (opts.name instanceof RegExp) {
     nameMatcher = `/${opts.name.source}/${opts.name.flags}`;
   } else {
-    const escapedName = opts.name.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
-    if (exact) {
-      nameMatcher = `'${escapedName}'`;
-    } else {
-      nameMatcher = `'${escapedName}'`;
-    }
+    const escapedName = opts.name
+      .replace(/\\/g, "\\\\")
+      .replace(/'/g, "\\'")
+      .replace(/\n/g, "\\n")
+      .replace(/\r/g, "\\r")
+      .replace(/\t/g, "\\t");
+    nameMatcher = `'${escapedName}'`;
   }
 
   const isRegExp = opts.name instanceof RegExp;
@@ -936,10 +940,93 @@ function buildByRoleScript(role: AriaRole, opts: GetByRoleOptions | undefined, t
       }
       if (!accName) accName = el.textContent || '';
       accName = accName.trim();
-      if (accName.indexOf(name) !== -1) {
+      if (accName.toLowerCase().indexOf(name.toLowerCase()) !== -1) {
         el.setAttribute('${tag}', '1');
         break;
       }
     }
+  })()`;
+}
+
+/**
+ * Build the evaluate script that counts elements matching the given role +
+ * optional name filter.  Returns the count as a number.
+ */
+function buildByRoleCountScript(role: AriaRole, opts: GetByRoleOptions | undefined): string {
+  const cssSel = roleToSelector(role).replace(/'/g, "\\'");
+
+  if (!opts?.name) {
+    return `(function(){
+      return document.querySelectorAll('${cssSel}').length;
+    })()`;
+  }
+
+  const exact = opts.exact ?? false;
+
+  if (opts.name instanceof RegExp) {
+    const nameMatcher = `/${opts.name.source}/${opts.name.flags}`;
+    return `(function(){
+      var pattern = ${nameMatcher};
+      var els = document.querySelectorAll('${cssSel}');
+      var count = 0;
+      for (var i = 0; i < els.length; i++) {
+        var el = els[i];
+        var accName = el.getAttribute('aria-label') || '';
+        if (!accName && el.getAttribute('aria-labelledby')) {
+          var ref = document.getElementById(el.getAttribute('aria-labelledby'));
+          if (ref) accName = ref.textContent || '';
+        }
+        if (!accName) accName = el.textContent || '';
+        accName = accName.trim();
+        if (pattern.test(accName)) count++;
+      }
+      return count;
+    })()`;
+  }
+
+  const escapedName = (opts.name as string)
+    .replace(/\\/g, "\\\\")
+    .replace(/'/g, "\\'")
+    .replace(/\n/g, "\\n")
+    .replace(/\r/g, "\\r")
+    .replace(/\t/g, "\\t");
+  const nameMatcher = `'${escapedName}'`;
+
+  if (exact) {
+    return `(function(){
+      var name = ${nameMatcher};
+      var els = document.querySelectorAll('${cssSel}');
+      var count = 0;
+      for (var i = 0; i < els.length; i++) {
+        var el = els[i];
+        var accName = el.getAttribute('aria-label') || '';
+        if (!accName && el.getAttribute('aria-labelledby')) {
+          var ref = document.getElementById(el.getAttribute('aria-labelledby'));
+          if (ref) accName = ref.textContent || '';
+        }
+        if (!accName) accName = el.textContent || '';
+        accName = accName.trim();
+        if (accName === name) count++;
+      }
+      return count;
+    })()`;
+  }
+
+  return `(function(){
+    var name = ${nameMatcher};
+    var els = document.querySelectorAll('${cssSel}');
+    var count = 0;
+    for (var i = 0; i < els.length; i++) {
+      var el = els[i];
+      var accName = el.getAttribute('aria-label') || '';
+      if (!accName && el.getAttribute('aria-labelledby')) {
+        var ref = document.getElementById(el.getAttribute('aria-labelledby'));
+        if (ref) accName = ref.textContent || '';
+      }
+      if (!accName) accName = el.textContent || '';
+      accName = accName.trim();
+      if (accName.toLowerCase().indexOf(name.toLowerCase()) !== -1) count++;
+    }
+    return count;
   })()`;
 }
