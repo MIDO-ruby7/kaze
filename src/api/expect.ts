@@ -37,6 +37,7 @@ export interface LocatorMatchers {
 export interface PageMatchers {
   toHaveURL(expected: string | RegExp, opts?: { timeout?: number }): Promise<void>;
   toHaveTitle(expected: string | RegExp, opts?: { timeout?: number }): Promise<void>;
+  toMatchDescription(description: string, opts?: { strict?: boolean; timeout?: number }): Promise<void>;
 }
 
 // ---------------------------------------------------------------------------
@@ -788,6 +789,30 @@ class PageExpect implements PageMatchers {
         `  Received title: ${lastTitle}\n` +
         `  Timeout: ${timeout}ms`,
     );
+  }
+
+  /**
+   * Assert that a screenshot of the page matches a natural language description
+   * using Claude Vision API.
+   *
+   * Requires ANTHROPIC_API_KEY environment variable.
+   */
+  async toMatchDescription(
+    description: string,
+    opts?: { strict?: boolean; timeout?: number },
+  ): Promise<void> {
+    const { assertScreenshotMatches } = await import("../ai/vision.js")
+    const buf = await this.page.screenshot()
+    if (!buf) throw new Error("Failed to take screenshot for AI assertion")
+    const result = await assertScreenshotMatches(buf, description, opts)
+    if (!result.pass) {
+      throw new AssertionError(
+        `AI visual assertion failed:\n` +
+        `  Description: "${description}"\n` +
+        `  Reason: ${result.reason}\n` +
+        `  Confidence: ${(result.confidence * 100).toFixed(0)}%`,
+      )
+    }
   }
 }
 

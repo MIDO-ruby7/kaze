@@ -22,6 +22,10 @@ export { Locator } from "./api/Locator.js";
 export { Route } from "./api/Route.js";
 export { collectTestCases, _resetRegistry } from "./api/test.js";
 
+// AI Vision assertions
+export { assertScreenshotMatches } from "./ai/vision.js";
+export type { VisionAssertResult } from "./ai/vision.js";
+
 // Re-export types for consumers
 export type { GotoOptions, WaitForSelectorOptions } from "./api/Page.js";
 export type { LocatorMatchers, PageMatchers } from "./api/expect.js";

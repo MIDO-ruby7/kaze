@@ -386,6 +386,32 @@ With 4 shards × 20 workers = **80 parallel contexts** from a single 16 GB machi
 
 ---
 
+## AI Visual Assertions
+
+Verify your UI with natural language using Claude Vision:
+
+```typescript
+import { test, expect } from "@midori/kaze"
+
+test("login page looks correct", async (page) => {
+  await page.goto("/login")
+
+  // AI checks the screenshot matches your description
+  await expect(page).toMatchDescription(
+    "A login form with email input, password input, and a blue submit button"
+  )
+})
+```
+
+```bash
+ANTHROPIC_API_KEY=your-key npx kaze
+```
+
+This sends a screenshot to Claude and asks if it matches your description.
+No selectors needed — perfect for verifying AI-generated UI.
+
+---
+
 ## Screenshots & HTML Reports
 
 **Screenshots** — saved automatically to `.kaze/screenshots/` on failure or timeout.
