@@ -417,6 +417,21 @@ export class Page {
   }
 
   /**
+   * Evaluate a JavaScript expression or function in the browser context.
+   * Playwright-compatible: page.evaluate(fn, ...args)
+   */
+  async evaluate<T = unknown>(
+    fnOrExpr: string | ((...args: unknown[]) => unknown),
+    ...args: unknown[]
+  ): Promise<T> {
+    const expr =
+      typeof fnOrExpr === "function"
+        ? `(${fnOrExpr.toString()})(${args.map((a) => JSON.stringify(a)).join(",")})`
+        : String(fnOrExpr);
+    return this.adapter.evaluate(this.contextId, expr) as Promise<T>;
+  }
+
+  /**
    * Internal: dispatch a DOM event on the element matching selector.
    * Used by Locator.hover() and similar methods.
    * @internal
