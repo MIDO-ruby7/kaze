@@ -76,10 +76,11 @@ let collectTestCases, BrowserPool, Scheduler
 
 try {
   ;({ collectTestCases } = await import("../dist/index.js"))
-  ;({ BrowserPool } = await import("../dist/pool/BrowserPool.js"))
-  ;({ Scheduler } = await import("../dist/scheduler/Scheduler.js"))
+  // BrowserPool and Scheduler are internal — import from source via tsx loader
+  ;({ BrowserPool } = await import("../src/pool/BrowserPool.js"))
+  ;({ Scheduler } = await import("../src/scheduler/Scheduler.js"))
 } catch (err) {
-  console.error("Failed to load kaze dist. Run `pnpm build` first.\n", err.message)
+  console.error("Failed to load kaze. Run `pnpm install` first.\n", err.message)
   process.exit(1)
 }
 

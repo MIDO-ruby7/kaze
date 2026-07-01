@@ -143,7 +143,7 @@ export const expect = (target) => {
 
   // toBeTruthy for existence checks
   base.toBeTruthy = async () => {
-    const exists = await target.count().catch(() => 0)
+    const exists = (typeof target.count === "function") ? await target.count().catch(() => 0) : (target ? 1 : 0)
     if (!exists) throw new Error("Expected element to be truthy (exist), but it was not found")
   }
 
