@@ -84,18 +84,19 @@ export class Locator {
     if (n === 0) return [];
 
     const escapedSel = escapeSelector(this.selector);
-    // Assign a unique data-kaze-idx attribute to each matched element so that
-    // each returned Locator can target it precisely via [data-kaze-idx="i"].
-    // This avoids :nth-child which is sibling-position-based, not match-index-based.
+    // Use a timestamped unique tag to avoid cross-test attribute pollution.
+    // data-kaze-idx (no suffix) would persist across tests if the DOM is reused,
+    // causing selector collisions. A unique suffix per all() call prevents this.
+    const tag = `data-kaze-idx-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
     await this.page._evaluate(
       `(function() {
         const els = document.querySelectorAll('${escapedSel}');
-        els.forEach(function(el, i) { el.setAttribute('data-kaze-idx', String(i)); });
+        els.forEach((el, i) => el.setAttribute('${tag}', String(i)));
       })()`,
     );
 
     return Array.from({ length: n }, (_, i) =>
-      new Locator(this.page, `[data-kaze-idx="${i}"]`),
+      new Locator(this.page, `[${tag}="${i}"]`),
     );
   }
 

@@ -222,8 +222,9 @@ describe("AC-1, AC-2: CdpAdapter.dispatchEvent — CDP click path", () => {
     });
     // scrollIntoView の Runtime.evaluate
     sendMock.mockResolvedValueOnce({ result: { value: null } });
-    // スクロール後の combined evaluate: まだ viewport 外
-    sendMock.mockResolvedValueOnce({
+    // ポーリング中のすべての combined evaluate: ずっと viewport 外
+    // (ポーリングは最大500ms・50msごとなので複数回呼ばれる可能性があるためデフォルト値を設定)
+    sendMock.mockResolvedValue({
       result: {
         value: JSON.stringify({ left: -500, top: -500, w: 10, h: 10, vw: 1280, vh: 720 }),
       },

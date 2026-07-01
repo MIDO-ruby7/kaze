@@ -616,14 +616,14 @@ export class CdpAdapter implements ProtocolAdapter {
   async resetContext(contextId: ContextId): Promise<void> {
     const session = this.getSession(contextId);
 
-    // Fast reset (~40ms): clear cookies only. The next test's page.goto() call
-    // will navigate to the test URL, which resets DOM and JS globals automatically.
-    // localStorage/sessionStorage are origin-scoped, so they're isolated once
-    // the test navigates to a different origin, or cleared via afterEach hooks.
-    //
-    // For complete storage isolation, users can add an afterEach hook that clears
-    // origin-specific storage (localStorage.clear(), etc.) before the reset.
     await session.send("Network.clearBrowserCookies");
+    // localStorage/sessionStorage は origin-scoped なので評価で削除
+    try {
+      await session.send("Runtime.evaluate", {
+        expression: "localStorage.clear(); sessionStorage.clear();",
+        returnByValue: false,
+      });
+    } catch { /* ページが about:blank 等でストレージなし → 無視 */ }
 
     // AC-4: disable request interception if it was enabled for this context
     if (this.interceptionEnabled.get(contextId)) {
@@ -898,41 +898,48 @@ export class CdpAdapter implements ProtocolAdapter {
       let x = Math.round(rect.left + rect.w / 2);
       let y = Math.round(rect.top + rect.h / 2);
 
-      // viewport 外の場合: scrollIntoView して座標を再計算
+      // viewport 外の場合: scrollIntoView してポーリングで viewport 内に収まるまで待つ
       if (x < 0 || y < 0 || x > rect.vw || y > rect.vh) {
         await session.send("Runtime.evaluate", {
           expression: `document.querySelector('${escaped}')?.scrollIntoView({ block: 'center', inline: 'center' })`,
           returnByValue: true,
         });
-        const r2 = await session.send<{ result: { value: string | null } }>(
-          "Runtime.evaluate",
-          {
-            expression: `(function(){
+
+        // wait for element to be in viewport (up to 500ms)
+        let inViewport = false;
+        const scrollDeadline = Date.now() + 500;
+        while (Date.now() < scrollDeadline) {
+          await new Promise(r => setTimeout(r, 50));
+          const r2 = await session.send<{ result: { value: string | null } }>(
+            "Runtime.evaluate",
+            {
+              expression: `(function(){
       const el = document.querySelector('${escaped}');
       if (!el) return null;
       const r = el.getBoundingClientRect();
-      return JSON.stringify({ left: r.left, top: r.top, w: r.width, h: r.height, vw: window.innerWidth, vh: window.innerHeight });
+      return JSON.stringify({ left:r.left, top:r.top, w:r.width, h:r.height, vw:window.innerWidth, vh:window.innerHeight });
     })()`,
-            returnByValue: true,
-          },
-        );
-        if (!r2.result.value) throw new Error(`Element not found after scroll: "${selector}"`);
-        const rect2 = JSON.parse(r2.result.value) as {
-          left: number;
-          top: number;
-          w: number;
-          h: number;
-          vw: number;
-          vh: number;
-        };
-        x = Math.round(rect2.left + rect2.w / 2);
-        y = Math.round(rect2.top + rect2.h / 2);
-        // スクロール後もまだ viewport 外なら諦める
-        if (x < 0 || y < 0 || x > rect2.vw || y > rect2.vh) {
-          throw new Error(
-            `Element still outside viewport after scroll: "${selector}" (${x},${y})`,
+              returnByValue: true,
+            },
           );
+          if (r2.result.value) {
+            const rr = JSON.parse(r2.result.value) as {
+              left: number;
+              top: number;
+              w: number;
+              h: number;
+              vw: number;
+              vh: number;
+            };
+            if (rr.left >= 0 && rr.top >= 0 && (rr.left + rr.w / 2) <= rr.vw && (rr.top + rr.h / 2) <= rr.vh) {
+              x = Math.round(rr.left + rr.w / 2);
+              y = Math.round(rr.top + rr.h / 2);
+              inViewport = true;
+              break;
+            }
+          }
         }
+        if (!inViewport) throw new Error(`Element still outside viewport after scroll: "${selector}" (${x},${y})`);
       }
 
       // Step 2: Send CDP mouse events (mousePressed + mouseReleased)

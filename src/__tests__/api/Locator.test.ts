@@ -154,9 +154,10 @@ describe("Locator", () => {
       expect(locators).toHaveLength(2);
       expect(locators[0]).toBeInstanceOf(Locator);
       expect(locators[1]).toBeInstanceOf(Locator);
-      // Each Locator should use data-kaze-idx attribute to target the correct element
-      expect(locators[0].selector).toBe('[data-kaze-idx="0"]');
-      expect(locators[1].selector).toBe('[data-kaze-idx="1"]');
+      // Each Locator should use a unique timestamped data-kaze-idx-* attribute
+      // to avoid cross-test attribute pollution (selector includes per-call unique suffix)
+      expect(locators[0].selector).toMatch(/^\[data-kaze-idx-\d+-[a-z0-9]+=["']?0["']?\]$/);
+      expect(locators[1].selector).toMatch(/^\[data-kaze-idx-\d+-[a-z0-9]+=["']?1["']?\]$/);
     });
 
     it("passes a script that assigns data-kaze-idx attributes", async () => {
