@@ -602,6 +602,17 @@ export class CdpAdapter implements ProtocolAdapter {
     await session.send("Page.enable");
     await session.send("Network.enable");
 
+    // Set a sensible default viewport (matches Playwright's default: 1280×720).
+    // Without this, headless Chromium may use a very small window that triggers
+    // responsive CSS (hamburger menus, collapsed navbars) and causes isVisible()
+    // to report false for otherwise-visible elements.
+    await session.send("Emulation.setDeviceMetricsOverride", {
+      width: 1280,
+      height: 720,
+      deviceScaleFactor: 1,
+      mobile: false,
+    });
+
     const contextId: ContextId = `ctx-${this.nextContextSeq++}`;
     this.contextMap.set(contextId, targetId);
     this.targetSessions.set(contextId, session);
@@ -842,6 +853,70 @@ export class CdpAdapter implements ProtocolAdapter {
       throw new Error(`Evaluation threw an exception: ${JSON.stringify(result.exceptionDetails)}`);
     }
     return result.result.value;
+  }
+
+  async fillInput(contextId: ContextId, selector: string, value: string): Promise<void> {
+    const session = this.getSession(contextId);
+    const escaped = selector.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
+
+    // Focus the element and clear existing value via JS (no CDP key shortcuts
+    // which can trigger browser commands on macOS, e.g. Meta+A = "Select All").
+    await session.send("Runtime.evaluate", {
+      expression: `(function() {
+        const el = document.querySelector('${escaped}');
+        if (!el) throw new Error('Element not found: ${escaped}');
+        el.focus();
+        // setSelectionRange works on text/search/password/email inputs
+        try { el.setSelectionRange(0, el.value.length); } catch {}
+      })()`,
+      returnByValue: false,
+      awaitPromise: false,
+    });
+
+    // Insert text via CDP — fires real beforeinput + input + change events.
+    // This updates React state (via synthetic event) AND Vue v-model (via native input).
+    if (value) {
+      await session.send("Input.insertText", { text: value });
+    } else {
+      // Clear by deleting the selection
+      await session.send("Input.dispatchKeyEvent", {
+        type: "keyDown", key: "Backspace", code: "Backspace",
+        windowsVirtualKeyCode: 8, nativeVirtualKeyCode: 8,
+      });
+      await session.send("Input.dispatchKeyEvent", {
+        type: "keyUp", key: "Backspace", code: "Backspace",
+        windowsVirtualKeyCode: 8, nativeVirtualKeyCode: 8,
+      });
+    }
+  }
+
+  async pressKey(contextId: ContextId, key: string): Promise<void> {
+    const session = this.getSession(contextId);
+    // Named key → keyCode / code mapping
+    const KEY_MAP: Record<string, { keyCode: number; code: string }> = {
+      Enter:     { keyCode: 13,  code: 'Enter' },
+      Tab:       { keyCode: 9,   code: 'Tab' },
+      Escape:    { keyCode: 27,  code: 'Escape' },
+      Backspace: { keyCode: 8,   code: 'Backspace' },
+      Delete:    { keyCode: 46,  code: 'Delete' },
+      Space:     { keyCode: 32,  code: 'Space' },
+      ArrowUp:   { keyCode: 38,  code: 'ArrowUp' },
+      ArrowDown: { keyCode: 40,  code: 'ArrowDown' },
+      ArrowLeft: { keyCode: 37,  code: 'ArrowLeft' },
+      ArrowRight:{ keyCode: 39,  code: 'ArrowRight' },
+      Home:      { keyCode: 36,  code: 'Home' },
+      End:       { keyCode: 35,  code: 'End' },
+      PageUp:    { keyCode: 33,  code: 'PageUp' },
+      PageDown:  { keyCode: 34,  code: 'PageDown' },
+      F1:        { keyCode: 112, code: 'F1' },
+      F2:        { keyCode: 113, code: 'F2' },
+    };
+    const entry = KEY_MAP[key];
+    const keyCode = entry?.keyCode ?? (key.length === 1 ? key.charCodeAt(0) : 0);
+    const code = entry?.code ?? (key.length === 1 ? `Key${key.toUpperCase()}` : key);
+    const base = { key, code, windowsVirtualKeyCode: keyCode, nativeVirtualKeyCode: keyCode };
+    await session.send("Input.dispatchKeyEvent", { type: "keyDown", ...base });
+    await session.send("Input.dispatchKeyEvent", { type: "keyUp", ...base });
   }
 
   async screenshot(contextId: ContextId): Promise<Buffer> {

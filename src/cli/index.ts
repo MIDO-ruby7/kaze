@@ -53,6 +53,7 @@ kaze — E2E test runner
 
 Usage:
   kaze [pattern...] [options]
+  kaze install                       # download Chromium for CI / first run
   kaze test [pattern...] [options]   # "test" subcommand (backward compat)
 
 Options:
@@ -69,16 +70,30 @@ Options:
   -h, --help               Show this help
 
 Examples:
+  kaze install                       # download Chromium
   kaze
   kaze src/features/
   kaze "**/*.spec.ts"
   kaze --workers=4 --reporter=dot
+  kaze --shard=1/4                   # CI sharding
   kaze --grep="login"
-  kaze --grep-invert="slow"
   kaze --watch
-  kaze test                          # backward compat
-  kaze test src/features/            # backward compat
 `);
+  process.exit(0);
+}
+
+// ---------------------------------------------------------------------------
+// install subcommand — download Chromium for CI / first run
+// ---------------------------------------------------------------------------
+if (positionals[0] === "install") {
+  const { installBrowser } = await import("../installer/index.js");
+  process.stdout.write("kaze: installing Chromium...\n");
+  const result = await installBrowser();
+  if (result.downloaded) {
+    console.log(`✓ Chromium ${result.version} installed → ${result.installDir}`);
+  } else {
+    console.log(`✓ Chromium ${result.version} already installed → ${result.installDir}`);
+  }
   process.exit(0);
 }
 

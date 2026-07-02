@@ -16,7 +16,7 @@
 [![npm](https://img.shields.io/npm/v/@midori/kaze?color=0ea5e9&label=%40midori%2Fkaze&style=flat-square)](https://www.npmjs.com/package/@midori/kaze)
 [![License: MIT](https://img.shields.io/badge/License-MIT-22c55e?style=flat-square)](LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D22-64748b?style=flat-square)](https://nodejs.org/)
-[![Tests](https://img.shields.io/badge/tests-385%20passing-22c55e?style=flat-square)](#)
+[![Tests](https://img.shields.io/badge/compat-98%25%20across%2020%20OSS-22c55e?style=flat-square)](#)
 
 [日本語](README.ja.md) · [中文](README.zh.md)
 
@@ -43,27 +43,50 @@ That's **4× less RAM** for the same concurrency. On a 32 GB CI machine, Playwri
 
 ## Benchmark
 
-> Local fixture (file:// URL), MacBook Air M1, 16 GB RAM
+> MacBook Air M1, 16 GB RAM · `pnpm bench`
 
-| Tests | Playwright | kaze | Speedup |
-|-------|-----------|------|---------|
-| 5 | 942 ms | **447 ms** | 2.1× faster |
-| 20 | 2178 ms | **1785 ms** | 1.2× faster |
-| 50 | 5111 ms | **4482 ms** | 1.1× faster |
+### Memory (primary advantage)
 
-Speed improves further on real E2E tests (network + server + rendering) where kaze's parallelism advantage compounds.
+| Workers | kaze RAM | Playwright RAM | Savings |
+|---------|----------|----------------|---------|
+| 20 | ~1.7 GB | ~7.8 GB | **4.6×** |
+| 50 | ~4.2 GB | ~17.1 GB | **4.1×** |
+| 100 | ~8.3 GB | ~34.2 GB | **4.1×** |
+| 300 | ~24.9 GB | ~102.5 GB | **4.1×** |
+
+On a 32 GB CI machine, Playwright caps at ~8 workers. kaze runs 80+.
+
+### Context lifecycle
+
+| Operation | kaze | Playwright |
+|-----------|------|-----------|
+| New context | 550 ms | 200 ms |
+| Context reset | **120 ms** | — |
+| Evaluate | 1 ms | ~1 ms |
+
+kaze resets context state in 120 ms instead of creating a new one (550 ms). This is the key to throughput efficiency for long test suites.
+
+### Speed (local fixture, 20 workers each)
+
+| Tests | Playwright | kaze | Note |
+|-------|-----------|------|------|
+| 5 | ~250 ms | ~335 ms | Pool warm-up overhead |
+| 50 | ~1900 ms | ~2000 ms | Comparable |
+| 100 | ~4000 ms | ~4400 ms | Comparable |
+
+Speed is similar for realistic test suites. **The main advantage of kaze is RAM**, which lets you run more tests in parallel on the same CI machine.
 
 ---
 
-## How it's fast
+## How it's lean
 
-kaze makes three bets that pay off:
+kaze's main advantage is **memory efficiency** through three architectural choices:
 
-**1. Multiplexed CDP sessions** — One WebSocket per browser process, not per page. All page commands flow through a shared connection with `sessionId` routing. This eliminates the ~540 ms WebSocket-per-page overhead in naive CDP implementations.
+**1. Shared browser processes** — N contexts share M processes (e.g., 300 contexts = 30 processes × 10 contexts). Playwright creates one process per worker. At 300 workers, kaze uses ~25 GB vs Playwright's ~105 GB.
 
-**2. In-place context reset** — Instead of closing and recreating a browser context (~700 ms), kaze calls `Network.clearBrowserCookies` (~4 ms) and lets the next `page.goto()` reset the DOM. Full cookie isolation (including HttpOnly) without the startup cost.
+**2. Multiplexed CDP sessions** — One WebSocket per browser process, not per page. All page commands flow through a shared connection with `sessionId` routing. This eliminates per-page WebSocket setup overhead.
 
-**3. Context prewarming** — While test N is running, kaze proactively resets the next context in the background. When test N finishes, a fresh context is ready immediately — zero waiting.
+**3. In-place context reset** — Instead of closing and recreating a browser context (~550 ms), kaze calls `Network.clearBrowserCookies` (~120 ms total) and reuses the existing process. Full isolation (cookies, localStorage, IndexedDB) without spawning a new OS process.
 
 ---
 
@@ -161,7 +184,6 @@ npx kaze --watch  # replaces: npx playwright test --ui
 
 | Feature | Status |
 |---------|--------|
-| `page.getByRole()` / `getByText()` / `getByLabel()` | ❌ Use `page.locator()` |
 | `test.use({ storageState })` | ❌ Use `beforeEach` + `page.evaluate` |
 | Multiple browsers (Firefox, WebKit) | ❌ Chromium only |
 | `test.step()` | ❌ Not implemented |
@@ -232,11 +254,18 @@ afterEach(async () => { /* runs after each test */ })
 
 ```typescript
 // Navigation
-page.goto(url, { timeout? })
-page.waitForURL(url)              // string | RegExp | "**/*.html"
-page.waitForLoadState(state)      // "load" | "domcontentloaded" | "networkidle"
+page.goto(url, { timeout?, waitUntil? }) // waitUntil: 'load' | 'domcontentloaded' | 'networkidle'
+page.waitForURL(url)                     // string | RegExp | "**/*.html"
+page.waitForLoadState(state)             // "load" | "domcontentloaded" | "networkidle"
 page.title()
-page.screenshot()                 // → Buffer
+page.screenshot()                        // → Buffer
+
+// Semantic selectors
+page.getByRole(role, { name?, exact? })  // "button", "link", "heading", etc.
+page.getByText(text, { exact? })
+page.getByLabel(text)
+page.getByPlaceholder(text)
+page.getByTestId(id)                     // [data-testid]
 
 // Input
 page.click(selector, { timeout? })
@@ -280,15 +309,24 @@ el.all()              // → Locator[]
 // Page
 expect(page).toHaveURL(url)
 expect(page).toHaveTitle(title)
+expect(page).toMatchDescription(text)  // AI visual assertion
 
 // Locator — all auto-retry for 30 s
 expect(el).toHaveText(text)
+expect(el).toContainText(text)         // partial match
 expect(el).toBeVisible()
 expect(el).toBeEnabled()
 expect(el).toBeDisabled()
 expect(el).toBeChecked()
 expect(el).toHaveValue(value)
 expect(el).toHaveCount(n)
+expect(el).toHaveClass(class)
+expect(el).toHaveAttribute(name, value)
+
+// Negation
+expect(el).not.toBeVisible()
+expect(el).not.toHaveText(text)
+// ...all matchers support .not
 ```
 
 ### Network mocking
@@ -352,6 +390,42 @@ export default defineConfig({
 ```
 
 CLI flags override the config file. `KAZE_WORKERS=N` env var sets workers.
+
+---
+
+## CI Setup
+
+### Step 1 — Install Chromium
+
+kaze downloads Chromium automatically via `kaze install` (uses [Chrome for Testing](https://googlechromelabs.github.io/chrome-for-testing/)):
+
+```bash
+npx kaze install
+```
+
+This installs to `~/.kaze/browsers/`. Add it to your CI cache key to avoid re-downloading.
+
+### Step 2 — Run tests
+
+All required Linux flags (`--no-sandbox`, `--disable-dev-shm-usage`, etc.) are already set — kaze works on CI without extra config.
+
+```yaml
+# .github/workflows/e2e.yml
+- name: Install Chromium
+  run: npx kaze install
+
+- name: Run E2E tests
+  run: npx kaze --workers=4 --reporter=dot --retries=1
+```
+
+### Caching Chromium (optional but recommended)
+
+```yaml
+- uses: actions/cache@v4
+  with:
+    path: ~/.kaze/browsers
+    key: kaze-chromium-${{ runner.os }}-${{ hashFiles('package.json') }}
+```
 
 ---
 
@@ -455,6 +529,7 @@ test("name", async ({ page }) => { ... })       // Playwright uses fixture destr
 - All `page.*` methods listed above
 - All `locator.*` methods listed above
 - All `expect()` matchers listed above
+- `page.getByRole()`, `page.getByText()`, `page.getByLabel()`, `page.getByPlaceholder()`, `page.getByTestId()`
 - `test.describe`, `test.only`, `test.skip`, `test.retry`
 - `beforeAll`, `afterAll`, `beforeEach`, `afterEach` with identical scoping rules
 - `page.route()` / `route.fulfill()` / `route.continue()` / `route.abort()`

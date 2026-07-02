@@ -193,10 +193,9 @@ export class Page {
   async fill(selector: string, value: string, opts?: FillOptions): Promise<void> {
     const timeout = opts?.timeout ?? 30_000;
     const deadline = Date.now() + timeout;
-    // Focus and set .value via JS, then dispatch input/change events.
+    let executed = false;
     const escapedSel = escapeSelector(selector);
     const escapedVal = value.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
-    let executed = false;
     while (Date.now() < deadline) {
       executed = true;
       const remaining = deadline - Date.now();
@@ -205,10 +204,16 @@ export class Page {
         await this.adapter.evaluate(
           this.contextId,
           `(function() {
-            const el = document.querySelector('${escapedSel}');
+            var el = document.querySelector('${escapedSel}');
             if (!el) throw new Error('Element not found: ${escapedSel}');
             el.focus();
-            el.value = '${escapedVal}';
+            // Use native prototype setter to bypass React's controlled-input tracker.
+            // React overrides the value setter on the element instance; going through
+            // the prototype setter marks the tracker stale so React fires onChange.
+            // For Vue and plain HTML the native setter is equivalent to direct assignment.
+            var proto = el.tagName === 'TEXTAREA' ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+            var setter = Object.getOwnPropertyDescriptor(proto, 'value');
+            if (setter && setter.set) { setter.set.call(el, '${escapedVal}'); } else { el.value = '${escapedVal}'; }
             el.dispatchEvent(new Event('input', { bubbles: true }));
             el.dispatchEvent(new Event('change', { bubbles: true }));
           })()`,
@@ -557,17 +562,29 @@ export class Page {
       await this.adapter.evaluate(
         this.contextId,
         `(function() {
-          // Named key → keyCode mapping (common keys)
-          const KEY_CODES = {
-            Enter: 13, Tab: 9, Escape: 27, Backspace: 8, Delete: 46, Space: 32,
-            ArrowUp: 38, ArrowDown: 40, ArrowLeft: 37, ArrowRight: 39,
-            Home: 36, End: 35, PageUp: 33, PageDown: 34, F1: 112, F2: 113,
+          const KEY_MAP = {
+            Enter:     { kc: 13,  code: 'Enter' },
+            Tab:       { kc: 9,   code: 'Tab' },
+            Escape:    { kc: 27,  code: 'Escape' },
+            Backspace: { kc: 8,   code: 'Backspace' },
+            Delete:    { kc: 46,  code: 'Delete' },
+            Space:     { kc: 32,  code: 'Space' },
+            ArrowUp:   { kc: 38,  code: 'ArrowUp' },
+            ArrowDown: { kc: 40,  code: 'ArrowDown' },
+            ArrowLeft: { kc: 37,  code: 'ArrowLeft' },
+            ArrowRight:{ kc: 39,  code: 'ArrowRight' },
+            Home:      { kc: 36,  code: 'Home' },
+            End:       { kc: 35,  code: 'End' },
+            PageUp:    { kc: 33,  code: 'PageUp' },
+            PageDown:  { kc: 34,  code: 'PageDown' },
+            F1:        { kc: 112, code: 'F1' },
+            F2:        { kc: 113, code: 'F2' },
           };
-          const keyCode = KEY_CODES['${escapedKey}'] ?? ('${escapedKey}'.length === 1 ? '${escapedKey}'.charCodeAt(0) : 0);
-          const code = KEY_CODES['${escapedKey}'] ? 'Key${escapedKey}' : ('${escapedKey}'.length === 1 ? 'Key' + '${escapedKey}'.toUpperCase() : '${escapedKey}');
-          const opts = { key: '${escapedKey}', code: code, keyCode: keyCode, which: keyCode, charCode: keyCode, bubbles: true, cancelable: true };
-          // Dispatch on focused element first, then document (mirrors real browser)
-          const target = document.activeElement || document.body || document;
+          const entry = KEY_MAP['${escapedKey}'];
+          const keyCode = entry ? entry.kc : ('${escapedKey}'.length === 1 ? '${escapedKey}'.charCodeAt(0) : 0);
+          const code    = entry ? entry.code : ('${escapedKey}'.length === 1 ? 'Key' + '${escapedKey}'.toUpperCase() : '${escapedKey}');
+          const opts = { key: '${escapedKey}', code, keyCode, which: keyCode, charCode: keyCode, bubbles: true, cancelable: true };
+          const target = document.activeElement || document.body;
           target.dispatchEvent(new KeyboardEvent('keydown', opts));
           target.dispatchEvent(new KeyboardEvent('keypress', opts));
           target.dispatchEvent(new KeyboardEvent('keyup', opts));

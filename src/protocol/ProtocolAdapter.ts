@@ -71,6 +71,19 @@ export interface ProtocolAdapter {
   resetContext?(contextId: ContextId): Promise<void>;
 
   /**
+   * Fill an input element using CDP Input.insertText — real browser-level typing
+   * that triggers native input events for React, Vue, Angular, and plain HTML.
+   */
+  fillInput?(contextId: ContextId, selector: string, value: string): Promise<void>;
+
+  /**
+   * Dispatch a real (CDP-level) keyboard key press.
+   * Triggers form submission, IME, and other browser behaviors that
+   * JS-dispatched keyboard events cannot.
+   */
+  pressKey?(contextId: ContextId, key: string): Promise<void>;
+
+  /**
    * Capture a PNG screenshot of the given context.
    * Returns the raw PNG bytes as a Buffer.
    * Optional — implementations that don't support this can omit it.
