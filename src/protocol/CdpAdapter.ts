@@ -182,6 +182,11 @@ class CdpSession {
     string,
     Array<(params: Record<string, unknown>) => void>
   >();
+  /** Predicate-based event listeners — resolve only when predicate returns true. */
+  private eventPredicateListeners = new Map<
+    string,
+    Array<(params: Record<string, unknown>) => boolean>
+  >();
   /** GAP-2: track whether this session has been closed */
   private closed = false;
 
@@ -237,12 +242,30 @@ class CdpSession {
     // Multiplexed event (has sessionId, no id) — route via central dispatcher
     if (msg.method && sessionId) {
       const key = `${sessionId}\x00${msg.method}`;
+      const params = msg.params ?? {};
+
+      // Standard one-shot listeners (no predicate)
       const listeners = this.eventListeners.get(key);
       if (listeners && listeners.length > 0) {
         const cb = listeners.shift()!;
         if (listeners.length === 0) this.eventListeners.delete(key);
-        cb(msg.params ?? {});
+        cb(params);
       }
+
+      // Predicate listeners — only remove when predicate returns true
+      const predicateListeners = this.eventPredicateListeners.get(key);
+      if (predicateListeners && predicateListeners.length > 0) {
+        let i = 0;
+        while (i < predicateListeners.length) {
+          if (predicateListeners[i]!(params)) {
+            predicateListeners.splice(i, 1);
+          } else {
+            i++;
+          }
+        }
+        if (predicateListeners.length === 0) this.eventPredicateListeners.delete(key);
+      }
+
       return;
     }
 
@@ -309,6 +332,48 @@ class CdpSession {
   /**
    * Wait for a CDP event in a specific multiplexed page session.
    */
+  waitForEventMatchingInSession(
+    method: string,
+    sessionId: string,
+    predicate: (params: Record<string, unknown>) => boolean,
+    timeoutMs: number = SEND_TIMEOUT_MS,
+  ): Promise<Record<string, unknown>> {
+    // Like waitForEventInSession but only resolves when predicate returns true.
+    // Used for Page.frameNavigated to filter for main frame (no parentId).
+    return new Promise((resolve, reject) => {
+      const key = `${sessionId}\x00${method}`;
+      let removed = false;
+
+      const timer = setTimeout(() => {
+        if (!removed) {
+          removed = true;
+          const listeners = this.eventPredicateListeners.get(key);
+          if (listeners) {
+            const idx = listeners.indexOf(cb);
+            if (idx !== -1) listeners.splice(idx, 1);
+            if (listeners.length === 0) this.eventPredicateListeners.delete(key);
+          }
+          reject(new Error(`Timeout waiting for CDP event "${method}" in session ${sessionId} after ${timeoutMs}ms`));
+        }
+      }, timeoutMs);
+
+      const cb = (params: Record<string, unknown>): boolean => {
+        if (!predicate(params)) return false; // keep listening
+        clearTimeout(timer);
+        removed = true;
+        resolve(params);
+        return true; // remove this listener
+      };
+
+      const existing = this.eventPredicateListeners.get(key);
+      if (existing) {
+        existing.push(cb);
+      } else {
+        this.eventPredicateListeners.set(key, [cb]);
+      }
+    });
+  }
+
   waitForEventInSession(
     method: string,
     sessionId: string,
@@ -466,6 +531,19 @@ class CdpPageSession {
     timeoutMs?: number,
   ): Promise<Record<string, unknown>> {
     return this.browserSession.waitForEventInSession(method, this.sessionId, timeoutMs);
+  }
+
+  waitForEventMatching<T extends Record<string, unknown>>(
+    method: string,
+    predicate: (params: T) => boolean,
+    timeoutMs: number = SEND_TIMEOUT_MS,
+  ): Promise<T> {
+    return this.browserSession.waitForEventMatchingInSession(
+      method,
+      this.sessionId,
+      predicate as (params: Record<string, unknown>) => boolean,
+      timeoutMs,
+    ) as Promise<T>;
   }
 
   close(): void {
@@ -836,10 +914,24 @@ export class CdpAdapter implements ProtocolAdapter {
 
   async navigate(contextId: ContextId, url: string): Promise<void> {
     const session = this.getSession(contextId);
-    // GAP-1: arm the listener before sending the command so no event is missed
-    const loadFired = session.waitForEvent("Page.loadEventFired");
+
+    // Wait for Page.frameNavigated (main frame only) instead of Page.loadEventFired.
+    //
+    // Page.loadEventFired fires in the renderer process after HTML parsing + JS execution.
+    // When multiple contexts in the same browser process navigate to the same origin,
+    // they share a renderer process, and loadEventFired events are serialized — context N
+    // cannot fire until context N-1 finishes rendering. This causes O(N) wall-clock time
+    // instead of O(1) for parallel navigations.
+    //
+    // Page.frameNavigated fires in the browser (network) process when the HTTP response
+    // is committed, before any rendering. It is NOT serialized across contexts.
+    // Post-navigation DOM readiness is handled by waitForSelector auto-waiting in Page.ts.
+    const navigated = session.waitForEventMatching(
+      "Page.frameNavigated",
+      (params: { frame: { parentId?: string } }) => !params.frame.parentId,
+    );
     await session.send("Page.navigate", { url });
-    await loadFired;
+    await navigated;
   }
 
   async evaluate(contextId: ContextId, expression: string): Promise<EvaluateResult> {
