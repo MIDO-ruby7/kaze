@@ -13,7 +13,7 @@
 
 **E2E testing. Faster. Leaner. Built on CDP.**
 
-[![npm](https://img.shields.io/npm/v/@midori/kaze?color=0ea5e9&label=%40midori%2Fkaze&style=flat-square)](https://www.npmjs.com/package/@midori/kaze)
+[![npm](https://img.shields.io/npm/v/@midori_ruby7/kaze?color=0ea5e9&label=%40midori%2Fkaze&style=flat-square)](https://www.npmjs.com/package/@midori_ruby7/kaze)
 [![License: MIT](https://img.shields.io/badge/License-MIT-22c55e?style=flat-square)](LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D22-64748b?style=flat-square)](https://nodejs.org/)
 [![Tests](https://img.shields.io/badge/compat-98%25%20across%2020%20OSS-22c55e?style=flat-square)](#)
@@ -93,12 +93,12 @@ kaze's main advantage is **memory efficiency** through three architectural choic
 ## Quick Start
 
 ```bash
-pnpm add -D @midori/kaze tsx
+pnpm add -D @midori_ruby7/kaze tsx
 ```
 
 ```typescript
 // tests/login.spec.ts
-import { test, expect } from "@midori/kaze"
+import { test, expect } from "@midori_ruby7/kaze"
 
 test("user can log in", async (page) => {
   await page.goto("/login")
@@ -122,7 +122,7 @@ That's it. No config required.
 ### Step 1 — Install kaze
 
 ```bash
-pnpm add -D @midori/kaze tsx
+pnpm add -D @midori_ruby7/kaze tsx
 pnpm remove @playwright/test   # optional
 ```
 
@@ -132,7 +132,7 @@ This is the only required code change in 95% of tests:
 
 ```diff
 - import { test, expect } from "@playwright/test"
-+ import { test, expect } from "@midori/kaze"
++ import { test, expect } from "@midori_ruby7/kaze"
 
 - test("user can log in", async ({ page }) => {
 + test("user can log in", async (page) => {
@@ -149,7 +149,7 @@ This is the only required code change in 95% of tests:
 - // playwright.config.ts
 - import { defineConfig } from "@playwright/test"
 + // kaze.config.ts
-+ import { defineConfig } from "@midori/kaze"
++ import { defineConfig } from "@midori_ruby7/kaze"
 
   export default defineConfig({
 -   use: { baseURL: "http://localhost:3000" },
@@ -174,7 +174,7 @@ npx kaze --watch  # replaces: npx playwright test --ui
 | Playwright | kaze |
 |------------|------|
 | `async ({ page })` | `async (page)` — no destructuring |
-| `@playwright/test` | `@midori/kaze` |
+| `@playwright/test` | `@midori_ruby7/kaze` |
 | `playwright.config.ts` | `kaze.config.ts` |
 | `test.use({ baseURL })` | env var or manual prefix |
 | `--reporter=html` | `--reporter=html` ✓ same |
@@ -198,7 +198,7 @@ The shim converts `async ({ page }) => {}` to kaze's `async (page) => {}` at run
 
 ```bash
 # 1. Copy the shim into your project
-cp node_modules/@midori/kaze/compat/shim.mjs tests/playwright-compat.mjs
+cp node_modules/@midori_ruby7/kaze/compat/shim.mjs tests/playwright-compat.mjs
 ```
 
 ```diff
@@ -241,7 +241,7 @@ test.describe(name, () => {
 ### Lifecycle hooks
 
 ```typescript
-import { beforeAll, afterAll, beforeEach, afterEach } from "@midori/kaze"
+import { beforeAll, afterAll, beforeEach, afterEach } from "@midori_ruby7/kaze"
 
 // Scoped to the enclosing describe block
 beforeAll(async () => { /* runs once before all tests */ })
@@ -374,7 +374,7 @@ Options:
 
 ```typescript
 // kaze.config.ts
-import { defineConfig } from "@midori/kaze"
+import { defineConfig } from "@midori_ruby7/kaze"
 
 export default defineConfig({
   workers: 20,
@@ -465,7 +465,7 @@ With 4 shards × 20 workers = **80 parallel contexts** from a single 16 GB machi
 Verify your UI with natural language using Claude Vision:
 
 ```typescript
-import { test, expect } from "@midori/kaze"
+import { test, expect } from "@midori_ruby7/kaze"
 
 test("login page looks correct", async (page) => {
   await page.goto("/login")
@@ -507,7 +507,7 @@ kaze is intentionally close to Playwright. When generating kaze tests, use these
 
 ```typescript
 // ✅ kaze
-import { test, expect } from "@midori/kaze"
+import { test, expect } from "@midori_ruby7/kaze"
 test("name", async (page) => { ... })          // page is first arg, not destructured
 
 // ❌ Playwright
@@ -519,7 +519,7 @@ test("name", async ({ page }) => { ... })       // Playwright uses fixture destr
 
 | | kaze | Playwright |
 |---|---|---|
-| Import | `@midori/kaze` | `@playwright/test` |
+| Import | `@midori_ruby7/kaze` | `@playwright/test` |
 | Test arg | `async (page)` | `async ({ page })` |
 | Fixtures | Not supported | `{ page, request, context }` |
 | Config | `kaze.config.ts` | `playwright.config.ts` |

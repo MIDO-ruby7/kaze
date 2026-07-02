@@ -13,7 +13,7 @@
 
 **E2E 测试。更快。更轻量。基于 CDP 构建。**
 
-[![npm](https://img.shields.io/npm/v/@midori/kaze?color=0ea5e9&label=%40midori%2Fkaze&style=flat-square)](https://www.npmjs.com/package/@midori/kaze)
+[![npm](https://img.shields.io/npm/v/@midori_ruby7/kaze?color=0ea5e9&label=%40midori%2Fkaze&style=flat-square)](https://www.npmjs.com/package/@midori_ruby7/kaze)
 [![License: MIT](https://img.shields.io/badge/License-MIT-22c55e?style=flat-square)](LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D22-64748b?style=flat-square)](https://nodejs.org/)
 
@@ -69,12 +69,12 @@ kaze 通过三个技术决策实现速度优势：
 ## 快速开始
 
 ```bash
-pnpm add -D @midori/kaze tsx
+pnpm add -D @midori_ruby7/kaze tsx
 ```
 
 ```typescript
 // tests/login.spec.ts
-import { test, expect } from "@midori/kaze"
+import { test, expect } from "@midori_ruby7/kaze"
 
 test("用户可以登录", async (page) => {
   await page.goto("/login")
@@ -98,7 +98,7 @@ npx kaze
 ### 第一步 — 安装
 
 ```bash
-pnpm add -D @midori/kaze tsx
+pnpm add -D @midori_ruby7/kaze tsx
 pnpm remove @playwright/test   # 可选
 ```
 
@@ -108,7 +108,7 @@ pnpm remove @playwright/test   # 可选
 
 ```diff
 - import { test, expect } from "@playwright/test"
-+ import { test, expect } from "@midori/kaze"
++ import { test, expect } from "@midori_ruby7/kaze"
 
 - test("用户可以登录", async ({ page }) => {
 + test("用户可以登录", async (page) => {
@@ -125,7 +125,7 @@ pnpm remove @playwright/test   # 可选
 - // playwright.config.ts
 + // kaze.config.ts
 - import { defineConfig } from "@playwright/test"
-+ import { defineConfig } from "@midori/kaze"
++ import { defineConfig } from "@midori_ruby7/kaze"
 
   export default defineConfig({
     testMatch: ["e2e/**/*.spec.ts"],
@@ -146,7 +146,7 @@ npx kaze --watch  # 替代 playwright test --ui
 | Playwright | kaze |
 |------------|------|
 | `async ({ page })` | `async (page)` — 无解构 |
-| `@playwright/test` | `@midori/kaze` |
+| `@playwright/test` | `@midori_ruby7/kaze` |
 | `playwright.config.ts` | `kaze.config.ts` |
 | `test.use({ baseURL })` | 环境变量或手动拼接 URL |
 
@@ -197,7 +197,7 @@ test.retry(n)(name, fn)      // 失败时最多重试 n 次
 ### 生命周期钩子
 
 ```typescript
-import { beforeAll, afterAll, beforeEach, afterEach } from "@midori/kaze"
+import { beforeAll, afterAll, beforeEach, afterEach } from "@midori_ruby7/kaze"
 
 beforeAll(async () => { /* describe 内所有测试前执行一次 */ })
 afterAll(async () => { /* describe 内所有测试后执行一次 */ })
@@ -274,7 +274,7 @@ kaze --screenshot=off      # 禁用截图
 
 ```typescript
 // kaze.config.ts
-import { defineConfig } from "@midori/kaze"
+import { defineConfig } from "@midori_ruby7/kaze"
 
 export default defineConfig({
   workers: 20,

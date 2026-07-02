@@ -1,5 +1,5 @@
 {
-  "name": "@midori/kaze",
+  "name": "@midori_ruby7/kaze",
   "version": "0.1.0",
   "description": "Fast, lightweight browser automation and E2E testing toolkit — a Playwright alternative built on Chrome DevTools Protocol",
   "keywords": ["e2e", "testing", "playwright", "browser", "automation"],

@@ -13,7 +13,7 @@
 
 **E2E テスト。より速く。より軽く。CDP で構築。**
 
-[![npm](https://img.shields.io/npm/v/@midori/kaze?color=0ea5e9&label=%40midori%2Fkaze&style=flat-square)](https://www.npmjs.com/package/@midori/kaze)
+[![npm](https://img.shields.io/npm/v/@midori_ruby7/kaze?color=0ea5e9&label=%40midori%2Fkaze&style=flat-square)](https://www.npmjs.com/package/@midori_ruby7/kaze)
 [![License: MIT](https://img.shields.io/badge/License-MIT-22c55e?style=flat-square)](LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D22-64748b?style=flat-square)](https://nodejs.org/)
 
@@ -69,12 +69,12 @@ kaze は 3 つの技術的な選択で速さを実現しています。
 ## クイックスタート
 
 ```bash
-pnpm add -D @midori/kaze tsx
+pnpm add -D @midori_ruby7/kaze tsx
 ```
 
 ```typescript
 // tests/login.spec.ts
-import { test, expect } from "@midori/kaze"
+import { test, expect } from "@midori_ruby7/kaze"
 
 test("ユーザーがログインできる", async (page) => {
   await page.goto("/login")
@@ -98,7 +98,7 @@ npx kaze
 ### ステップ 1 — インストール
 
 ```bash
-pnpm add -D @midori/kaze tsx
+pnpm add -D @midori_ruby7/kaze tsx
 pnpm remove @playwright/test   # 任意
 ```
 
@@ -108,7 +108,7 @@ pnpm remove @playwright/test   # 任意
 
 ```diff
 - import { test, expect } from "@playwright/test"
-+ import { test, expect } from "@midori/kaze"
++ import { test, expect } from "@midori_ruby7/kaze"
 
 - test("ユーザーがログインできる", async ({ page }) => {
 + test("ユーザーがログインできる", async (page) => {
@@ -125,7 +125,7 @@ pnpm remove @playwright/test   # 任意
 - // playwright.config.ts
 - import { defineConfig } from "@playwright/test"
 + // kaze.config.ts
-+ import { defineConfig } from "@midori/kaze"
++ import { defineConfig } from "@midori_ruby7/kaze"
 
   export default defineConfig({
     testMatch: ["e2e/**/*.spec.ts"],
@@ -146,7 +146,7 @@ npx kaze --watch  # playwright test --ui の代わりに
 | Playwright | kaze |
 |------------|------|
 | `async ({ page })` | `async (page)` — destructuring なし |
-| `@playwright/test` | `@midori/kaze` |
+| `@playwright/test` | `@midori_ruby7/kaze` |
 | `playwright.config.ts` | `kaze.config.ts` |
 | `test.use({ baseURL })` | 環境変数またはURL手動プレフィックス |
 
@@ -202,7 +202,7 @@ test.describe(name, () => {
 ### ライフサイクルフック
 
 ```typescript
-import { beforeAll, afterAll, beforeEach, afterEach } from "@midori/kaze"
+import { beforeAll, afterAll, beforeEach, afterEach } from "@midori_ruby7/kaze"
 
 beforeAll(async () => { /* describe 内の全テストの前に1回 */ })
 afterAll(async () => { /* describe 内の全テストの後に1回 */ })
@@ -309,7 +309,7 @@ kaze --screenshot=off      # スクリーンショット無効
 
 ```typescript
 // kaze.config.ts
-import { defineConfig } from "@midori/kaze"
+import { defineConfig } from "@midori_ruby7/kaze"
 
 export default defineConfig({
   workers: 20,
